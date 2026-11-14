@@ -1,0 +1,31 @@
+name: Build Apple Silicon VST3
+on: [push, workflow_dispatch]
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify native Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_ARCHITECTURES=arm64
+      - name: Build
+        run: cmake --build build --config Release --parallel 3
+      - name: Download pinned speech test model
+        run: bash scripts/download-model.sh tiny "$RUNNER_TEMP/tracer-models"
+      - name: Test analysis, UI, export and actual local speech inference
+        env:
+          TRACER_TEST_MODEL: ${{ runner.temp }}/tracer-models/ggml-tiny.bin
+        run: ctest --test-dir build -C Release --output-on-failure
+      - name: Sign and archive
+        run: |
+          codesign --force --deep --sign - "build/TextAndChordTracer_artefacts/Release/VST3/Text and Chord Tracer.vst3"
+          codesign --verify --deep --strict "build/TextAndChordTracer_artefacts/Release/VST3/Text and Chord Tracer.vst3"
+          ditto -c -k --sequesterRsrc --keepParent "build/TextAndChordTracer_artefacts/Release/VST3/Text and Chord Tracer.vst3" Text-and-Chord-Tracer-macOS-arm64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Text-and-Chord-Tracer-macOS-arm64
+          path: |
+            Text-and-Chord-Tracer-macOS-arm64.zip
+            build/ui-preview.png
+            build/lead-sheet.docx
