@@ -4,7 +4,7 @@
 #include <iostream>
 #include <stdexcept>
 void check(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
-void transparency() {
+void silentOutput() {
     for(bool doubles:{false,true}) for(bool vocal:{false,true}) {
         std::unique_ptr<juce::AudioProcessor> p(createPluginFilter());
         if(vocal) { auto buses=p->getBusesLayout(); buses.inputBuses.set(1,juce::AudioChannelSet::stereo()); check(p->setBusesLayout(buses),"Optional vocal bus unavailable"); }
@@ -16,18 +16,45 @@ void transparency() {
             for(int count:{0,1,257,1025}) {
                 juce::AudioBuffer<T> audio(channels,count);
                 for(int ch=0;ch<channels;++ch) for(int i=0;i<count;++i) audio.setSample(ch,i,static_cast<T>(.2*std::sin(i*.1+ch)));
-                juce::AudioBuffer<T> before; before.makeCopyOf(audio); p->processBlock(audio,midi);
-                for(int ch=0;ch<channels;++ch) for(int i=0;i<count;++i) check(before.getSample(ch,i)==audio.getSample(ch,i),"Tracing modified audio");
+                juce::AudioBuffer<T> before; before.makeCopyOf(audio);
+                p->getParameters()[0]->setValueNotifyingHost(count==257?0.f:1.f);
+                p->processBlock(audio,midi);
+                for(int ch=0;ch<channels;++ch) for(int i=0;i<count;++i) check(ch<2?audio.getSample(ch,i)==T{}:audio.getSample(ch,i)==before.getSample(ch,i),"Output leaked or vocal input was overwritten");
+                audio.makeCopyOf(before);
                 p->processBlockBypassed(audio,midi);
-                for(int ch=0;ch<channels;++ch) for(int i=0;i<count;++i) check(before.getSample(ch,i)==audio.getSample(ch,i),"Bypass modified audio");
+                for(int ch=0;ch<channels;++ch) for(int i=0;i<count;++i) check(ch<2?audio.getSample(ch,i)==T{}:audio.getSample(ch,i)==before.getSample(ch,i),"Bypass output leaked or vocal input was overwritten");
             }
         };
         if(doubles) run(double{}); else run(float{});
         check(p->getLatencySamples()==0,"Tracer added latency"); p->releaseResources();
     }
 }
+void captureBeforeMute() {
+    std::unique_ptr<juce::AudioProcessor> processor(createPluginFilter()); processor->prepareToPlay(48000,512);
+    juce::AudioBuffer<float> audio(2,512); juce::MidiBuffer midi;
+    for(int block=0;block<180;++block) {
+        for(int i=0;i<512;++i) {
+            double value=0; for(int note:{48,52,55}) value+=.12*std::sin(2*music::pi*440*std::pow(2.,(note-69)/12.)*(block*512+i)/48000.);
+            audio.setSample(0,i,static_cast<float>(value)); audio.setSample(1,i,static_cast<float>(-value));
+        }
+        processor->processBlock(audio,midi); check(audio.getMagnitude(0,512)==0.f,"Main output leaked analysis audio");
+        if(block%8==0) juce::Thread::sleep(2);
+    }
+    processor->releaseResources();
+    bool found=false;
+    for(int retry=0;retry<300 && !found;++retry) {
+        juce::MemoryBlock state; processor->getStateInformation(state);
+        auto xml=juce::AudioProcessor::getXmlFromBinary(state.getData(),static_cast<int>(state.getSize()));
+        if(xml) {
+            auto bars=juce::ValueTree::fromXml(*xml).getChildWithName("LeadSheet");
+            for(const auto& bar:bars) for(int beat=0;beat<4;++beat) found=found || bar.getProperty("chord"+juce::String(beat)).toString()=="C";
+        }
+        if(!found) juce::Thread::sleep(5);
+    }
+    check(found,"Silencing happened before the chord analysis tap");
+}
 int main() try {
-    juce::ScopedJuceInitialiser_GUI init; transparency();
+    juce::ScopedJuceInitialiser_GUI init; silentOutput(); captureBeforeMute();
     TraceDocument document; music::Grid grid; grid.bpm=112; grid.numerator=4;
     for(int bar=0;bar<6;++bar) {
         grid.quarter=bar*4.; document.touch(grid,bar*2.);
@@ -63,5 +90,5 @@ int main() try {
     check(juce::parseXML(text)!=nullptr && text.contains("Let the rhythm") && text.contains("&lt;&amp;&gt;"),"DOCX content or XML escaping failed");
     auto image=editor->createComponentSnapshot(editor->getLocalBounds()); auto stream=juce::File::getCurrentWorkingDirectory().getChildFile("ui-preview.png").createOutputStream();
     check(stream!=nullptr,"Cannot write preview"); stream->setPosition(0); stream->truncate(); check(juce::PNGImageFormat().writeImageToStream(image,*stream),"Cannot render editor");
-    std::cout<<"Float/double transparency, bypass, lead-sheet edits/recall, timing modes, UI scales, DOCX XML and actual editor preview passed\n";
+    std::cout<<"Float/double silence, capture before mute, silent bypass callbacks, lead-sheet edits/recall, timing modes, UI scales, DOCX XML and actual editor preview passed\n";
 } catch(const std::exception& e) { std::cerr<<e.what()<<'\n'; return 1; }

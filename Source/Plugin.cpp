@@ -4,7 +4,7 @@
 class TracerProcessor final : public juce::AudioProcessor,private juce::Timer {
 public:
     TracerProcessor():AudioProcessor(BusesProperties().withInput("Music",juce::AudioChannelSet::stereo(),true)
-        .withInput("Clean vocal (optional)",juce::AudioChannelSet::stereo(),false).withOutput("Through",juce::AudioChannelSet::stereo(),true)),state(*this,nullptr,"TextAndChordTracer",layout()) {
+        .withInput("Clean vocal (optional)",juce::AudioChannelSet::stereo(),false).withOutput("Muted output",juce::AudioChannelSet::stereo(),true)),state(*this,nullptr,"TextAndChordTracer",layout()) {
         enabled=state.getRawParameterValue("trace"); mode=state.getRawParameterValue("timingMode");
         bpm=state.getRawParameterValue("bpmHint"); numerator=state.getRawParameterValue("beatsHint"); denominator=state.getRawParameterValue("unitHint");
         modelPath=defaultModel().getFullPathName(); if(defaultModel().existsAsFile()) worker.requestModel(modelPath);
@@ -28,7 +28,7 @@ public:
     }
     void prepareToPlay(double sampleRate,int maximumBlockSize) override { rate=sampleRate; fallbackSeconds=0; callbackTimeout=juce::jmax(.5,2.*maximumBlockSize/sampleRate); }
     void releaseResources() override { stopCapture(); }
-    void stopCapture() { AudioCapture packet; packet.generation=worker.generation.load(); worker.audio.push(packet); }
+    void stopCapture() { worker.finishRequested=true; }
     template<class T> void capture(juce::AudioBuffer<T>& buffer) {
         lastCallback.store(juce::Time::getMillisecondCounter(),std::memory_order_relaxed);
         auto main=getBusBuffer(buffer,true,0); const bool vocalEnabled=getBus(true,1)->isEnabled(); auto vocal=getBusBuffer(buffer,true,1);
@@ -45,7 +45,7 @@ public:
         const int timing=juce::roundToInt(mode->load());
         if(timing!=2) { grid.numerator=juce::roundToInt(numerator->load()); grid.denominator=4<<juce::roundToInt(denominator->load()); }
         playing=playing && enabled->load()>.5f;
-        // Read-only taps: main and optional vocal buses are never modified.
+        // Copy analysis inputs first; output is silenced only after capture completes.
         for(int offset=0;offset<main.getNumSamples();offset+=512) {
             AudioCapture packet; packet.count=juce::jmin(512,main.getNumSamples()-offset); packet.rate=rate;
             packet.playing=playing; packet.generation=worker.generation.load(); packet.mode=timing; packet.hint=bpm->load();
@@ -58,11 +58,12 @@ public:
             if(!worker.audio.push(packet)) ++worker.dropped;
         }
         fallbackSeconds=seconds+main.getNumSamples()/rate;
+        auto output=getBusBuffer(buffer,false,0); output.clear(); // Mute every output, preserving read-only sidechain inputs.
     }
     void processBlock(juce::AudioBuffer<float>& b,juce::MidiBuffer&) override { capture(b); }
     void processBlock(juce::AudioBuffer<double>& b,juce::MidiBuffer&) override { capture(b); }
-    void processBlockBypassed(juce::AudioBuffer<float>&,juce::MidiBuffer&) override { stopCapture(); }
-    void processBlockBypassed(juce::AudioBuffer<double>&,juce::MidiBuffer&) override { stopCapture(); }
+    void processBlockBypassed(juce::AudioBuffer<float>& b,juce::MidiBuffer&) override { stopCapture(); auto output=getBusBuffer(b,false,0); output.clear(); }
+    void processBlockBypassed(juce::AudioBuffer<double>& b,juce::MidiBuffer&) override { stopCapture(); auto output=getBusBuffer(b,false,0); output.clear(); }
     bool supportsDoublePrecisionProcessing() const override { return true; }
     const juce::String getName() const override { return "Text and Chord Tracer"; }
     bool acceptsMidi() const override { return false; } bool producesMidi() const override { return false; }
@@ -171,12 +172,12 @@ public:
     }
     void paint(juce::Graphics& g) override {
         using namespace theme; g.fillAll(cream); g.setColour(ink); g.setFont(juce::FontOptions(11.f));
-        g.drawText("YODO AUDIO    /    LIVE SONG NOTEBOOK",32,14,610,25,juce::Justification::left);
+        g.drawText("YODO AUDIO    /    LIVE SONG NOTEBOOK    /    OUTPUT MUTED",32,14,610,25,juce::Justification::left);
         g.setFont(juce::FontOptions(33.f)); g.drawText("Text and Chord Tracer",30,45,700,44,juce::Justification::left);
         g.setGradientFill(juce::ColourGradient(juce::Colour(0xff343d36),0,144,juce::Colour(0xff1e2722),0,786,false)); g.fillRoundedRectangle(16,144,868,642,16);
         g.setColour(gold); g.setFont(juce::FontOptions(10.f)); g.drawText("TEMPO",470,158,44,30,juce::Justification::left); g.drawText("METER",716,146,80,12,juce::Justification::left); g.drawText("/",794,158,8,30,juce::Justification::centred);
         g.setColour(ink.withAlpha(.7f)); g.setFont(juce::FontOptions(10.f));
-        g.drawText("LOCAL TRANSCRIPTION  /  STEREO THROUGH  /  FLOAT & DOUBLE",32,800,600,20,juce::Justification::left);
+        g.drawText("ANALYSIS ONLY  /  OUTPUT MUTED  /  LOCAL TRANSCRIPTION",32,800,600,20,juce::Justification::left);
         g.drawText("DOUBLE-CLICK A BAR TO EDIT",600,800,264,20,juce::Justification::right);
     }
     void refresh() {

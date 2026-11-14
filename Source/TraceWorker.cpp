@@ -61,8 +61,10 @@ void TraceWorker::run() {
         } else { speech->count=0; speech->stampCount=0; speech->skip=0; }
     };
     while(!threadShouldExit()) {
-        if(finishRequested.exchange(false)) { if(wasPlaying) flush(false); wasPlaying=false; capturing=false; }
-        if(!audio.pop(*packet)) { wait(5); continue; }
+        if(!audio.pop(*packet)) {
+            if(finishRequested.exchange(false)) { if(wasPlaying) flush(false); wasPlaying=false; capturing=false; }
+            wait(5); continue;
+        }
         capturing=packet->playing;
         usingHost=packet->mode==2 && packet->host.fromHost;
         if(packet->mode==2 && !packet->host.fromHost) { packet->mode=1; packet->hint=packet->host.bpm; }

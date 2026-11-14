@@ -37,7 +37,7 @@ struct SpeechJob {
 class TraceWorker final : public juce::Thread {
 public:
     TraceWorker(); ~TraceWorker() override;
-    void newTake() { const auto value=++generation; document.clear(value); detectedBpm=0; detectedNumerator=0; dropped=0; }
+    void newTake() { const auto value=++generation; document.clear(value); detectedBpm=0; detectedNumerator=0; dropped=0; finishRequested=false; }
     void requestModel(const juce::String& path);
     juce::String status() const { const std::lock_guard<std::mutex> guard(statusLock); return message; }
     bool pending() const { return speechBusy.load() || !jobs.empty(); }

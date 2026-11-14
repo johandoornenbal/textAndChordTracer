@@ -1,6 +1,6 @@
 # Text and Chord Tracer
 
-An Apple Silicon VST3 song notebook: local lyric transcription, provisional audio
+An analysis-only Apple Silicon VST3 song notebook: local lyric transcription, provisional audio
 chord recognition and a scrolling lead sheet with lyrics under chord positions.
 It uses the cream, charcoal and brass studio UI, three interface sizes, session
 recall and Mac build/sign/install workflow of the other Doornenbal Audio plugins.
@@ -36,7 +36,7 @@ is recommended. See [REAPER routing](docs/REAPER.md).
 ## Capturing lyrics and chords
 
 1. Insert **Text and Chord Tracer** on the stereo full mix or an analysis bus and
-   choose a timing mode. The main stereo signal passes through unchanged.
+   choose a timing mode. Its input is captured for analysis, then all output is silenced.
 2. For better words, enable the plugin's optional **Clean vocal** stereo input in
    the host and route an isolated vocal to it. Music still comes from the main
    input for chord analysis. Without that bus, words are attempted from the mix.
@@ -66,9 +66,10 @@ extension or ambiguous voicing, especially in dense mixes. Review the guesses.
 
 Both background queues are bounded. A backlog indicator appears if processing
 cannot keep up and audio is skipped. Captured notes are capped at 2,048 bars per
-take. Nothing is allocated, locked or transcribed in the audio callback; neither
-main audio nor the optional vocal bus is modified. Host bypass passes through
-and stops capture. Session recall preserves the title, settings, model path,
+take. Nothing is allocated, locked or transcribed in the audio callback; inputs are copied for analysis before the output buffer is cleared. Sidechain input buffers remain untouched. The
+plugin is intentionally silent, including its bypass callbacks. A DAW can route
+around a hard-bypassed or removed plugin, so keep Master/parent send disabled as
+a second safeguard. Session recall preserves the title, settings, model path,
 lead sheet and manual corrections; raw audio and model weights are not embedded.
 
 ## Local transcription setup
@@ -156,7 +157,7 @@ Linux needs JUCE's normal ALSA, font and X11 development dependencies. The rootl
 can use `-DTRACER_WITH_WHISPER=OFF` for chord/UI-only builds; release builds keep it on.
 Tests cover synthetic chord fixtures, stereo polarity, pulse tempo, measure
 placement, actual background capture with tempo changes, stale-take rejection,
-float/double transparency, bypass, lead-sheet edits/recall, UI sizes and valid Word
+float/double silent output, capture before muting, bypass callbacks, lead-sheet edits/recall, UI sizes and valid Word
 XML. The editor test writes `build/ui-preview.png` with demonstration text and
 `build/lead-sheet.docx`. Demo words in the preview are not a recognition result.
 

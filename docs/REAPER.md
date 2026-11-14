@@ -21,8 +21,10 @@ clear chord instrument and an isolated main vocal without changing the mix.
    source audio **1/2** and destination audio **1/2**, initially at 0 dB.
 4. Add a send from the main vocal track to Song analysis, with source audio
    **1/2** and destination audio **3/4**, initially at 0 dB.
-5. **Disable Master/parent send on Song analysis. Leave the track unmuted.**
-   This avoids adding another audible instrument copy, while letting its FX run.
+5. The plugin clears its output after capturing the inputs, so it adds no audible
+   copy even if Master/parent send is accidentally left on. For a second guard,
+   **disable Master/parent send on Song analysis. Leave the track unmuted.**
+   This also protects against REAPER routing around a hard-bypassed or removed plugin, while letting its FX run.
    Keep the original instrument/vocal tracks routed to the mix as normal.
    There is no send from Song analysis back to those source tracks.
 6. Select **Detect** or **Hint + follow**. These modes do not rely on the project
