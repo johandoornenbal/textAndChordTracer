@@ -1,6 +1,7 @@
 #include <juce_audio_utils/juce_audio_utils.h>
 #include "../Source/TraceModel.h"
 #include "../Source/DocumentExport.h"
+#include "../Source/ModelLocation.h"
 #include <iostream>
 #include <stdexcept>
 void check(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
@@ -53,8 +54,33 @@ void captureBeforeMute() {
     }
     check(found,"Silencing happened before the chord analysis tap");
 }
+void modelPaths() {
+    const auto root=juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("tracer-model-paths-"+juce::Uuid().toString());
+    struct Cleanup { juce::File folder; ~Cleanup() { folder.deleteRecursively(); } } cleanup{root};
+    const auto mac=modelLocation::directoryFor(root.getChildFile("Library"),true);
+    check(mac==root.getChildFile("Library/Application Support/Doornenbal Audio/TextAndChordTracer/models"),"Mac model directory does not match installer");
+#if JUCE_MAC
+    check(modelLocation::directory()==juce::File::getSpecialLocation(juce::File::userHomeDirectory).getChildFile("Library/Application Support/Doornenbal Audio/TextAndChordTracer/models"),"Native Mac default path is wrong");
+#endif
+    const auto legacy=root.getChildFile("legacy"),custom=root.getChildFile("custom");
+    check(mac.createDirectory().wasOk() && legacy.createDirectory().wasOk() && custom.createDirectory().wasOk(),"Cannot create model test folders");
+    const auto base=mac.getChildFile("ggml-base.bin"),small=mac.getChildFile("ggml-small.bin"),old=legacy.getChildFile("ggml-base.bin");
+    const auto missing=custom.getChildFile("missing.bin"),chosen=custom.getChildFile("chosen.bin");
+    check(modelLocation::pickerDirectory(missing,mac)==mac,"Missing model did not open the standard folder");
+    check(modelLocation::resolve(missing,mac,legacy)==base,"Missing model default incorrect");
+    check(old.replaceWithText("fixture"),"Cannot write legacy fixture");
+    check(modelLocation::resolve(missing,mac,legacy)==old,"Existing legacy model not recovered");
+    check(small.replaceWithText("fixture"),"Cannot write small fixture");
+    check(modelLocation::resolve(missing,mac,legacy)==small,"Installed small model not discovered");
+    check(base.replaceWithText("fixture"),"Cannot write base fixture");
+    check(modelLocation::resolve(old.getSiblingFile("absent.bin"),mac,legacy)==base,"Missing saved path did not recover installed base model");
+    check(chosen.replaceWithText("fixture"),"Cannot write custom fixture");
+    check(modelLocation::resolve(chosen,mac,legacy)==chosen && modelLocation::pickerDirectory(chosen,mac)==custom,"Custom model selection was lost");
+    const auto signature=modelLocation::signature(base); base.appendText(" changed");
+    check(signature!=modelLocation::signature(base),"Model replacement did not change retry signature");
+}
 int main() try {
-    juce::ScopedJuceInitialiser_GUI init; silentOutput(); captureBeforeMute();
+    juce::ScopedJuceInitialiser_GUI init; modelPaths(); silentOutput(); captureBeforeMute();
     TraceDocument document; music::Grid grid; grid.bpm=112; grid.numerator=4;
     for(int bar=0;bar<6;++bar) {
         grid.quarter=bar*4.; document.touch(grid,bar*2.);

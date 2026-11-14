@@ -1,10 +1,15 @@
 #include <juce_audio_formats/juce_audio_formats.h>
 #include "../Source/SpeechEngine.h"
 #include "../Source/TraceWorker.h"
+#include "../Source/ModelLocation.h"
 #include <iostream>
 int main(int argc,char** argv) {
-    const auto model=juce::SystemStats::getEnvironmentVariable("TRACER_TEST_MODEL","");
-    if(model.isEmpty() || argc<2) { std::cout<<"Speech inference needs TRACER_TEST_MODEL and the JFK speech fixture\n"; return 77; }
+    const auto explicitModel=juce::SystemStats::getEnvironmentVariable("TRACER_TEST_MODEL","");
+    const auto model=explicitModel.isNotEmpty()?explicitModel:modelLocation::find().getFullPathName();
+    if(argc<2) { std::cerr<<"Speech fixture is not configured\n"; return 1; }
+    if(explicitModel.isEmpty() && !juce::File(model).existsAsFile()) {
+        std::cout<<"No speech model installed at "<<model<<". Install one or set TRACER_TEST_MODEL.\n"; return 77;
+    }
     SpeechEngine engine; if(!engine.load(model)) { std::cerr<<"Model failed to load\n"; return 1; }
     juce::AudioFormatManager formats; formats.registerBasicFormats();
     std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(juce::File(argv[1])));

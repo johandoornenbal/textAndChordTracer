@@ -43,12 +43,20 @@ if [[ "$install_only" == false ]]; then
     cmake -S "$project_dir" -B "$build_dir" -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON \
         -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 "$@"
     cmake --build "$build_dir" --config Release --parallel 3
-    ctest --test-dir "$build_dir" -C Release --output-on-failure
+    if [[ "${TRACER_SKIP_MODEL_DOWNLOAD:-0}" != 1 ]]; then
+        bash "$script_dir/download-model.sh" "${TRACER_MODEL:-base}"
+    fi
+    model_for_tests="${TRACER_TEST_MODEL:-$HOME/Library/Application Support/Doornenbal Audio/TextAndChordTracer/models/ggml-${TRACER_MODEL:-base}.bin}"
+    if [[ -f "$model_for_tests" || -n "${TRACER_TEST_MODEL:-}" ]]; then
+        TRACER_TEST_MODEL="$model_for_tests" ctest --test-dir "$build_dir" -C Release --output-on-failure
+    else
+        ctest --test-dir "$build_dir" -C Release --output-on-failure
+    fi
     bundle="$build_dir/TextAndChordTracer_artefacts/Release/VST3/Text and Chord Tracer.vst3"
 fi
 [[ -d "$bundle/Contents" ]] || { echo "VST3 bundle not found: $bundle" >&2; exit 1; }
 [[ -f "$bundle/Contents/MacOS/Text and Chord Tracer" ]] || { echo "Not an Text and Chord Tracer macOS VST3 bundle: $bundle" >&2; exit 1; }
-if [[ "${TRACER_SKIP_MODEL_DOWNLOAD:-0}" != 1 ]]; then
+if [[ "$install_only" == true && "${TRACER_SKIP_MODEL_DOWNLOAD:-0}" != 1 ]]; then
     bash "$script_dir/download-model.sh" "${TRACER_MODEL:-base}"
 fi
 install_dir="${TRACER_INSTALL_DIR:-$HOME/Library/Audio/Plug-Ins/VST3}"

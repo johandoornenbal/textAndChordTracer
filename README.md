@@ -92,7 +92,11 @@ bash scripts/download-model.sh small
 Select that file with **Speech model...** afterwards. `tiny` is also supported.
 Models live in:
 `~/Library/Application Support/Doornenbal Audio/TextAndChordTracer/models/`.
-A missing model is shown explicitly; chord analysis and manual editing still work.
+The picker opens this folder even when it is empty. Installed base, small or tiny
+models are discovered automatically; a valid custom selection is remembered. A
+missing model is shown explicitly, and installing a model while the plugin is
+open triggers a background load. Chord analysis and manual editing still work
+without a model.
 
 ## Word and Google Docs export
 
@@ -161,8 +165,10 @@ float/double silent output, capture before muting, bypass callbacks, lead-sheet 
 XML. The editor test writes `build/ui-preview.png` with demonstration text and
 `build/lead-sheet.docx`. Demo words in the preview are not a recognition result.
 
-Actual model inference is a separate test. It is explicitly **skipped** if
-`TRACER_TEST_MODEL` is unset, rather than reported as passing. The Mac workflow
+Actual model inference is a separate test. It uses `TRACER_TEST_MODEL` when set, otherwise it discovers an installed model in
+the standard folder. It is explicitly **skipped** only when no model is installed
+and no override is provided. The Mac installer downloads/verifies the model before
+running tests, so a normal installation runs this speech test. The Mac workflow
 downloads a pinned tiny model and runs it on whisper.cpp's bundled JFK **speech**
 fixture. This checks integration, not sung-lyric accuracy. Native DAW playback,
 real singing and expressive tempo/meter detection still require musical review.

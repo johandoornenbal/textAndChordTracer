@@ -1,18 +1,20 @@
 #include <JuceHeader.h>
 #include "TraceWorker.h"
 #include "DocumentExport.h"
+#include "ModelLocation.h"
 class TracerProcessor final : public juce::AudioProcessor,private juce::Timer {
 public:
     TracerProcessor():AudioProcessor(BusesProperties().withInput("Music",juce::AudioChannelSet::stereo(),true)
         .withInput("Clean vocal (optional)",juce::AudioChannelSet::stereo(),false).withOutput("Muted output",juce::AudioChannelSet::stereo(),true)),state(*this,nullptr,"TextAndChordTracer",layout()) {
         enabled=state.getRawParameterValue("trace"); mode=state.getRawParameterValue("timingMode");
         bpm=state.getRawParameterValue("bpmHint"); numerator=state.getRawParameterValue("beatsHint"); denominator=state.getRawParameterValue("unitHint");
-        modelPath=defaultModel().getFullPathName(); if(defaultModel().existsAsFile()) worker.requestModel(modelPath);
+        modelPath=modelLocation::find().getFullPathName();
+        if(juce::File(modelPath).existsAsFile()) chooseModel(juce::File(modelPath));
         startTimerHz(2);
     }
     ~TracerProcessor() override { stopTimer(); }
     static juce::File defaultModel() {
-        return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("Doornenbal Audio/TextAndChordTracer/models/ggml-base.bin");
+        return modelLocation::directory().getChildFile("ggml-base.bin");
     }
     static juce::AudioProcessorValueTreeState::ParameterLayout layout() {
         juce::AudioProcessorValueTreeState::ParameterLayout p;
@@ -80,21 +82,27 @@ public:
         if(auto xml=getXmlFromBinary(data,length);xml && xml->hasTagName("TextAndChordTracer")) {
             auto saved=juce::ValueTree::fromXml(*xml); worker.newTake(); worker.document.restore(saved.getChildWithName("LeadSheet"));
             uiSize=juce::jlimit(1,3,static_cast<int>(saved.getProperty("uiSize",2))); title=saved.getProperty("title","Untitled song").toString().substring(0,200);
-            auto path=saved.getProperty("modelPath",defaultModel().getFullPathName()).toString();
-            if(path!=modelPath) { modelPath=path; worker.requestModel(path); }
+            auto path=modelLocation::find(juce::File(saved.getProperty("modelPath",defaultModel().getFullPathName()).toString())).getFullPathName();
+            if(path!=modelPath) { modelPath=path; if(juce::File(path).existsAsFile()) chooseModel(juce::File(path)); }
             saved.removeChild(saved.getChildWithName("LeadSheet"),nullptr); state.replaceState(saved);
         }
     }
-    void chooseModel(const juce::File& file) { modelPath=file.getFullPathName(); worker.requestModel(modelPath); updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true)); }
+    void chooseModel(const juce::File& file) { modelPath=file.getFullPathName(); lastModelAttempt=modelLocation::signature(file); worker.requestModel(modelPath); updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true)); }
     juce::AudioProcessorValueTreeState state;
     TraceWorker worker;
     int uiSize=2; juce::String title="Untitled song",modelPath;
 private:
-    void timerCallback() override { if(worker.capturing.load() && (enabled->load()<.5f || (juce::Time::getMillisecondCounter()-lastCallback.load())*.001>callbackTimeout)) worker.finishRequested=true; const auto value=worker.document.revision.load(); if(value!=lastRevision) { lastRevision=value; updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true)); } }
+    void timerCallback() override {
+        if(!worker.modelReady.load() && !worker.speechBusy.load()) {
+            const auto file=modelLocation::find(juce::File(modelPath));
+            if(file.existsAsFile() && modelLocation::signature(file)!=lastModelAttempt) chooseModel(file);
+        }
+        if(worker.capturing.load() && (enabled->load()<.5f || (juce::Time::getMillisecondCounter()-lastCallback.load())*.001>callbackTimeout)) worker.finishRequested=true; const auto value=worker.document.revision.load(); if(value!=lastRevision) { lastRevision=value; updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true)); } }
     std::atomic<float>* enabled=nullptr; std::atomic<float>* mode=nullptr; std::atomic<float>* bpm=nullptr;
     std::atomic<float>* numerator=nullptr; std::atomic<float>* denominator=nullptr;
     double rate=48000,fallbackSeconds=0,callbackTimeout=.5; unsigned lastRevision=0;
     std::atomic<juce::uint32> lastCallback{0};
+    juce::String lastModelAttempt;
 };
 namespace theme { const juce::Colour cream{0xfff4eddb},ink{0xff252b29},gold{0xffd7ac61},muted{0xff99a192}; }
 class LeadSheet final : public juce::Component {
@@ -138,7 +146,7 @@ public:
         trace.onClick=[this] { if(!trace.getToggleState()) processor.worker.finishRequested=true; };
         traceAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(processor.state,"trace",trace);
         newTake.setButtonText("New take"); newTake.onClick=[this] { processor.worker.newTake(); };
-        model.setButtonText("Speech model..."); model.onClick=[this] { selectModel(); };
+        model.setComponentID("speechModel"); model.setButtonText("Speech model..."); model.setTooltip("Choose a model from "+modelLocation::directory().getFullPathName()); model.onClick=[this] { selectModel(); };
         exportWord.setButtonText("Export Word / Docs..."); exportWord.setComponentID("export"); exportWord.onClick=[this] { exportDocument(); };
         exportWord.setTooltip("Save a Word .docx lead sheet. For Google Docs, upload the file to Drive and open it with Google Docs.");
         follow.setButtonText("Follow: ON"); follow.setClickingTogglesState(true); follow.setToggleState(true,juce::dontSendNotification);
@@ -194,7 +202,11 @@ public:
         }
         const auto bpm=processor.worker.detectedBpm.load();
         timingStatus.setText((processor.worker.capturing.load()?"TRACING":"READY")+juce::String("   /   ")+(timing.getSelectedId()==3 && processor.worker.usingHost.load()?"DAW grid":bpm>0?"~"+juce::String(bpm,1)+" BPM":"Listening for a steady pulse")+"   /   Bar grid is provisional",juce::dontSendNotification);
-        auto message=processor.worker.status(); if(processor.worker.dropped.load()>0) message+=" | Capture backlog: some audio skipped";
+        auto message=processor.worker.status();
+        if(!processor.worker.modelReady.load() && !juce::File(processor.modelPath).existsAsFile())
+            message="Speech model not installed. Run scripts/download-model.sh base. Folder: "+modelLocation::directory().getFullPathName();
+        else if(processor.worker.modelReady.load()) message+=" | "+juce::File(processor.modelPath).getFileName();
+        if(processor.worker.dropped.load()>0) message+=" | Capture backlog: some audio skipped";
         status.setText(message,juce::dontSendNotification);
         exportWord.setEnabled(!processor.worker.capturing.load() && !processor.worker.pending() && haveBars);
     }
@@ -202,7 +214,12 @@ private:
     bool dragging() { return viewport.getVerticalScrollBar().isMouseButtonDown(); }
     void timerCallback() override { refresh(); }
     void selectModel() {
-        chooser=std::make_unique<juce::FileChooser>("Choose a multilingual ggml Whisper model",TracerProcessor::defaultModel(),"*.bin");
+        const auto folder=modelLocation::pickerDirectory(juce::File(processor.modelPath),modelLocation::directory());
+        if(folder.createDirectory().failed()) {
+            juce::AlertWindow::showMessageBoxAsync(juce::MessageBoxIconType::WarningIcon,"Model folder unavailable",folder.getFullPathName());
+            return;
+        }
+        chooser=std::make_unique<juce::FileChooser>("Choose a multilingual ggml Whisper model",folder,"*.bin");
         chooser->launchAsync(juce::FileBrowserComponent::openMode|juce::FileBrowserComponent::canSelectFiles,[safe=juce::Component::SafePointer<TracerPanel>(this)](const juce::FileChooser& selected) {
             if(safe && selected.getResult().existsAsFile()) safe->processor.chooseModel(selected.getResult());
         });
