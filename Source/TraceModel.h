@@ -66,6 +66,7 @@ public:
     }
     std::optional<music::Grid> positionAt(double seconds) const {
         const std::lock_guard<std::mutex> guard(lock);
+        if(!std::isfinite(seconds)) return std::nullopt;
         auto next=positions.upper_bound(seconds+1.e-7);
         if(next==positions.begin()) return std::nullopt;
         auto current=std::prev(next);
@@ -78,6 +79,44 @@ public:
             grid.bpm+=(next->second.grid.bpm-grid.bpm)*fraction;
         } else grid.quarter+=delta*grid.bpm/60.;
         return grid;
+    }
+    void installTapGuide(const std::vector<music::TimedGrid>& guide,unsigned nextEpoch) {
+        if(guide.empty()) return;
+        const std::lock_guard<std::mutex> guard(lock); epoch=nextEpoch;
+        const double start=guide.front().seconds;
+        auto remove=positions.lower_bound(start);
+        if(remove!=positions.begin()) { auto prior=std::prev(remove); prior->second.end=std::min(prior->second.end,start); }
+        positions.erase(remove,positions.end());
+        // Rebuild automatic guesses on replay, but retain every manual correction.
+        const auto first=music::barNumber(guide.front().grid);
+        for(auto entry=bars.lower_bound(first);entry!=bars.end();) {
+            auto& bar=entry->second;
+            if(!bar.chordsEdited && !bar.lyricsEdited) entry=bars.erase(entry);
+            else {
+                if(!bar.chordsEdited) std::fill(bar.chords.begin(),bar.chords.end(),juce::String{});
+                if(!bar.lyricsEdited) { bar.lyrics.clear(); std::fill(bar.words.begin(),bar.words.end(),juce::String{}); bar.transcriptPass=0; }
+                ++entry;
+            }
+        }
+        for(const auto& point:guide) {
+            if(positions.size()>=36000) break;
+            positions[point.seconds]={point.end,point.grid};
+            const auto index=music::barNumber(point.grid); auto found=bars.find(index);
+            if(found!=bars.end()) {
+                auto& bar=found->second;
+                if(std::abs(point.grid.quarter-point.grid.originQuarter)<1.e-8) { bar.quarter=point.grid.originQuarter; bar.seconds=point.seconds; }
+                bar.bpm=point.grid.bpm;
+                // Changing a meter must not discard manually entered cells.
+                const int count=point.grid.numerator;
+                auto resize=[count](std::vector<juce::String>& cells) {
+                    for(size_t i=static_cast<size_t>(count);i<cells.size();++i)
+                        if(cells[i].isNotEmpty()) cells[static_cast<size_t>(count-1)]+=(cells[static_cast<size_t>(count-1)].isEmpty()?"":" ")+cells[i];
+                    cells.resize(static_cast<size_t>(count));
+                };
+                bar.numerator=count; bar.denominator=point.grid.denominator; resize(bar.chords); resize(bar.words);
+            }
+        }
+        ++revision;
     }
     music::Grid continuation() const {
         const std::lock_guard<std::mutex> guard(lock); music::Grid grid;

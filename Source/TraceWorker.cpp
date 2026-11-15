@@ -1,9 +1,9 @@
 #include "TraceWorker.h"
 TraceWorker::TraceWorker():Thread("Chord and tempo analysis"),speechThread(*this) { startThread(); speechThread.startThread(); }
 TraceWorker::~TraceWorker() { cancelled=true; signalThreadShouldExit(); speechThread.signalThreadShouldExit(); waitForThreadToExit(-1); speechThread.waitForThreadToExit(-1); }
-void TraceWorker::requestModel(const juce::String& path) {
+void TraceWorker::requestModel(const juce::String& path,int language) {
     { const std::lock_guard<std::mutex> guard(modelLock); requestedModel=path; }
-    modelReady=false; modelRequested=true;
+    requestedLanguage=language; modelReady=false; modelRequested=true;
 }
 void TraceWorker::SpeechThread::run() {
     SpeechEngine engine; auto job=std::make_unique<SpeechJob>();
@@ -11,15 +11,16 @@ void TraceWorker::SpeechThread::run() {
         if(owner.modelRequested.exchange(false)) {
             juce::String path; { const std::lock_guard<std::mutex> guard(owner.modelLock); path=owner.requestedModel; }
             owner.speechBusy=true; owner.setStatus("Loading local transcription model...");
-            const bool ready=engine.load(path); owner.modelReady=ready; owner.speechBusy=false;
-            owner.setStatus(ready?"Local lyrics ready - best results with a clean vocal input":"Model unavailable - choose a valid ggml Whisper model");
+            const bool loaded=engine.load(path); const bool ready=loaded && engine.supportsLanguage(owner.requestedLanguage.load()==1?"nl":"en"); owner.modelReady=ready; owner.speechBusy=false;
+            owner.setStatus(ready?"Local lyrics ready - best results with a clean vocal input":loaded?"Dutch requires a multilingual model (ggml-base.bin); this model is English-only":"Model unavailable - choose a valid ggml Whisper model");
         }
         if(!owner.jobs.pop(*job)) { wait(15); continue; }
         if(job->generation!=owner.generation.load() || !engine.ready()) continue;
+        if(!engine.supportsLanguage(job->language==1?"nl":"en")) { owner.setStatus("Dutch requires a multilingual model - select ggml-base.bin"); continue; }
         double energy=0; for(int i=job->skip;i<job->count;++i) energy+=job->samples[static_cast<size_t>(i)]*job->samples[static_cast<size_t>(i)];
         if(energy/juce::jmax(1,job->count-job->skip)<1.e-6) continue;
         owner.speechBusy=true; owner.setStatus("Transcribing locally - sung words may need correction");
-        const auto words=engine.transcribe(job->samples.data(),job->count,owner.cancelled,"auto");
+        const auto words=engine.transcribe(job->samples.data(),job->count,owner.cancelled,job->language==1?"nl":"en");
         if(job->generation==owner.generation.load()) {
             for(const auto& word:words) {
                 const int sample=juce::jlimit(0,job->count-1,static_cast<int>(word.seconds*16000));
@@ -42,7 +43,7 @@ void TraceWorker::run() {
     double filterL=0,filterR=0,filterV=0,lastHint=120;
     music::Grid grid;
     unsigned activeGeneration=0,pass=0,lastHintRevision=0;
-    int lastMode=-1;
+    int lastMode=-1,lastLanguage=-1;
     std::string previousChord;
     bool wasPlaying=false,heardAudio=false;
     double previousEnergy=0;
@@ -76,6 +77,7 @@ void TraceWorker::run() {
             analysisPhase=speechPhase=filterL=filterR=filterV=0; grid={}; heardAudio=false; previousEnergy=0;
         }
         if(!packet->playing) { if(wasPlaying) flush(false); wasPlaying=false; continue; }
+        if(lastLanguage!=packet->language) { if(lastLanguage>=0) flush(false); speech->language=packet->language; lastLanguage=packet->language; }
         const bool seek=lastEnd>=0 && std::abs(packet->seconds-lastEnd)>.02;
         const bool restarted=!wasPlaying || seek;
         if(seek) { flush(false); filled=hop=stable=energySamples=0; energy=previousEnergy=0; previousChord.clear(); tempo.reset(); analysisPhase=speechPhase=filterL=filterR=filterV=0; }

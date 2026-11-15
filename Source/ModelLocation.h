@@ -15,17 +15,18 @@ inline juce::File directory() {
 inline juce::File legacyDirectory() {
     return juce::File::getSpecialLocation(juce::File::userApplicationDataDirectory).getChildFile("Doornenbal Audio/TextAndChordTracer/models");
 }
-inline juce::File resolve(const juce::File& requested,const juce::File& standard,const juce::File& legacy={}) {
-    if(requested.existsAsFile()) return requested;
+inline bool englishOnlyName(const juce::File& file) { return file.getFileName().containsIgnoreCase(".en"); }
+inline juce::File resolve(const juce::File& requested,const juce::File& standard,const juce::File& legacy={},bool dutch=false) {
+    if(requested.existsAsFile() && (!dutch || !englishOnlyName(requested))) return requested;
+    const juce::StringArray names=dutch?juce::StringArray{"ggml-base.bin","ggml-small.bin","ggml-tiny.bin"}
+        :juce::StringArray{"ggml-base.en.bin","ggml-base.bin","ggml-small.en.bin","ggml-small.bin","ggml-tiny.en.bin","ggml-tiny.bin"};
     for(const auto& folder:{standard,legacy}) {
         if(folder==juce::File{}) continue;
-        for(const char* name:{"ggml-base.bin","ggml-small.bin","ggml-tiny.bin"}) {
-            auto file=folder.getChildFile(name); if(file.existsAsFile()) return file;
-        }
+        for(const auto& name:names) { auto file=folder.getChildFile(name); if(file.existsAsFile()) return file; }
     }
-    return standard.getChildFile("ggml-base.bin");
+    return standard.getChildFile(dutch?"ggml-base.bin":"ggml-base.en.bin");
 }
-inline juce::File find(const juce::File& requested={}) { return resolve(requested,directory(),legacyDirectory()); }
+inline juce::File find(const juce::File& requested={},bool dutch=false) { return resolve(requested,directory(),legacyDirectory(),dutch); }
 inline juce::File pickerDirectory(const juce::File& selected,const juce::File& standard) {
     return selected.existsAsFile()?selected.getParentDirectory():standard;
 }

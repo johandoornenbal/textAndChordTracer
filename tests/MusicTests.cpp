@@ -19,6 +19,15 @@ void tapTests() {
     taps.reset(); taps.tap(0,4,4); taps.tap(70,4,4); taps.tap(500,4,4); taps.tap(1010,4,4); taps.tap(1500,4,4);
     check(taps.count()==4 && std::abs(taps.quarterBpm()-120.)<.1,"Tap jitter/double-click handling failed");
     taps.tap(1800,6,8); check(taps.count()==1 && !taps.ready(6,8),"Changing meter reused old tap intervals");
+    BarTapSession series;
+    series.downbeat(0,10,4,4); for(int i=1;i<4;++i) series.other(i*500.,10+i*.5);
+    series.downbeat(2000,12,4,4); for(int i=1;i<4;++i) series.other(2000+i*600.,12+i*.6);
+    auto guide=series.guide(0,0,4400,14.4);
+    check(series.ready() && guide.size()==8,"Multi-bar tap guide missing beats");
+    check(std::abs(guide[0].grid.bpm-120.)<.01 && std::abs(guide[4].grid.bpm-100.)<.01,"Tap guide lost local tempo changes");
+    check(music::barNumber(guide[4].grid)==1 && std::abs(guide[4].seconds-12.)<.01,"Tap downbeat lost bar position");
+    BarTapSession slow; slow.downbeat(0,0,6,8); for(int i=1;i<6;++i) slow.other(i*1500.,i*1.5);
+    check(slow.ready() && std::abs(slow.quarterBpm()-20.)<.01,"Slow compound-meter tap failed");
     TapCaptureGate gate;
     check(gate.permit(true,0,.01),"Normal playback was blocked"); gate.begin();
     check(!gate.permit(true,.01,.01),"Captured while tapping"); gate.finish();

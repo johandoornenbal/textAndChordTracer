@@ -21,7 +21,7 @@ bool SpeechEngine::load(const juce::String& path) {
 std::vector<RecognisedWord> SpeechEngine::transcribe(const float* samples,int count,std::atomic<bool>& cancelled,const juce::String& language) {
     std::vector<RecognisedWord> words;
 #if TRACER_WITH_WHISPER
-    if(!context || count<16000) return words;
+    if(!context || !supportsLanguage(language) || count<16000) return words;
     auto* ctx=static_cast<whisper_context*>(context);
     auto params=whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
     params.n_threads=juce::jlimit(1,4,juce::SystemStats::getNumCpus()/2);
@@ -43,4 +43,12 @@ std::vector<RecognisedWord> SpeechEngine::transcribe(const float* samples,int co
     juce::ignoreUnused(samples,count,cancelled,language);
 #endif
     return words;
+}
+
+bool SpeechEngine::supportsLanguage(const juce::String& language) const {
+#if TRACER_WITH_WHISPER
+    return context && (language=="en" || whisper_is_multilingual(static_cast<whisper_context*>(context))!=0);
+#else
+    juce::ignoreUnused(language); return false;
+#endif
 }

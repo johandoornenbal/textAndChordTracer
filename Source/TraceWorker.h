@@ -21,7 +21,7 @@ private:
 };
 struct AudioCapture {
     std::array<float,512> left{},right{},vocal{};
-    int count=0,mode=0;
+    int count=0,mode=0,language=0;
     double rate=48000,seconds=0,hint=120;
     music::Grid host;
     bool playing=false;
@@ -31,14 +31,18 @@ struct SpeechStamp { int sample=0; double seconds=0; music::Grid grid; };
 struct SpeechJob {
     std::array<float,128000> samples{};
     std::array<SpeechStamp,96> stamps{};
-    int count=0,stampCount=0,skip=0;
+    int count=0,stampCount=0,skip=0,language=0;
     unsigned generation=0,pass=0;
 };
 class TraceWorker final : public juce::Thread {
 public:
     TraceWorker(); ~TraceWorker() override;
     void newTake() { const auto value=++generation; document.clear(value); detectedBpm=0; detectedNumerator=0; dropped=0; finishRequested=false; }
-    void requestModel(const juce::String& path);
+    void installTapGuide(const std::vector<music::TimedGrid>& guide) {
+        if(guide.empty()) return;
+        const auto value=++generation; document.installTapGuide(guide,value); ++focusRevision;
+    }
+    void requestModel(const juce::String& path,int language=0);
     juce::String status() const { const std::lock_guard<std::mutex> guard(statusLock); return message; }
     bool pending() const { return speechBusy.load() || !jobs.empty(); }
     CaptureQueue<AudioCapture,128> audio;
@@ -57,6 +61,7 @@ private:
     void run() override;
     void setStatus(const juce::String& text) { const std::lock_guard<std::mutex> guard(statusLock); message=text; }
     CaptureQueue<SpeechJob,6> jobs;
+    std::atomic<int> requestedLanguage{0};
     std::atomic<bool> cancelled{false},modelRequested{false};
     mutable std::mutex statusLock,modelLock;
     juce::String message="Choose a Whisper model to enable local lyrics",requestedModel;

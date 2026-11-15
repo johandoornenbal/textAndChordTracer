@@ -12,10 +12,10 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel 3
       - name: Download pinned speech test model
-        run: bash scripts/download-model.sh tiny "$RUNNER_TEMP/tracer-models"
+        run: bash scripts/download-model.sh tiny.en "$RUNNER_TEMP/tracer-models"
       - name: Test analysis, UI, export and actual local speech inference
         env:
-          TRACER_TEST_MODEL: ${{ runner.temp }}/tracer-models/ggml-tiny.bin
+          TRACER_TEST_MODEL: ${{ runner.temp }}/tracer-models/ggml-tiny.en.bin
         run: ctest --test-dir build -C Release --output-on-failure
       - name: Sign and archive
         run: |

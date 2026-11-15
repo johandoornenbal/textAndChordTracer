@@ -52,12 +52,7 @@ If they play different voicings or substitutions, audition one at a time.
 
 ## Tap tempo before the take
 
-Set the meter, then tap once per beat: four taps in 4/4 or six eighth-note taps in
-6/8. Capture pauses from the first tap. Use tempo applies the estimate as a moving
-hint and waits for a playback restart or reposition. Stop/return to the intended
-point and replay. Record now is the explicit way to bypass that wait. Existing
-notes are kept; choose New take before tapping to build a fresh timing map.
-Tempo indications below 40 BPM are supported, down to 10 quarter-note BPM.
+Set the meter. Tap **Bar start** on each first count, **Other beat** on the remaining counts, and **Stop** after a series of bars. Capture pauses while tapping and waits for replay. Tap during playback to save the changing bar/beat positions for the lead sheet. Automatic guesses from the first marked bar are rebuilt; manual edits remain. English uses the installed base.en model; select Dutch to use multilingual base.
 
 ## Playback and export
 

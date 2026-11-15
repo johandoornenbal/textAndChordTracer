@@ -11,6 +11,7 @@ int main(int argc,char** argv) {
         std::cout<<"No speech model installed at "<<model<<". Install one or set TRACER_TEST_MODEL.\n"; return 77;
     }
     SpeechEngine engine; if(!engine.load(model)) { std::cerr<<"Model failed to load\n"; return 1; }
+    if(!engine.supportsLanguage("en") || (modelLocation::englishOnlyName(juce::File(model)) && engine.supportsLanguage("nl"))) { std::cerr<<"Model language compatibility incorrect\n"; return 1; }
     juce::AudioFormatManager formats; formats.registerBasicFormats();
     std::unique_ptr<juce::AudioFormatReader> reader(formats.createReaderFor(juce::File(argv[1])));
     if(!reader || reader->sampleRate!=16000) return 1;

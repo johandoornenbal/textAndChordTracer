@@ -68,13 +68,17 @@ void modelPaths() {
     const auto base=mac.getChildFile("ggml-base.bin"),small=mac.getChildFile("ggml-small.bin"),old=legacy.getChildFile("ggml-base.bin");
     const auto missing=custom.getChildFile("missing.bin"),chosen=custom.getChildFile("chosen.bin");
     check(modelLocation::pickerDirectory(missing,mac)==mac,"Missing model did not open the standard folder");
-    check(modelLocation::resolve(missing,mac,legacy)==base,"Missing model default incorrect");
+    check(modelLocation::resolve(missing,mac,legacy)==mac.getChildFile("ggml-base.en.bin"),"Missing model default incorrect");
     check(old.replaceWithText("fixture"),"Cannot write legacy fixture");
     check(modelLocation::resolve(missing,mac,legacy)==old,"Existing legacy model not recovered");
     check(small.replaceWithText("fixture"),"Cannot write small fixture");
     check(modelLocation::resolve(missing,mac,legacy)==small,"Installed small model not discovered");
     check(base.replaceWithText("fixture"),"Cannot write base fixture");
     check(modelLocation::resolve(old.getSiblingFile("absent.bin"),mac,legacy)==base,"Missing saved path did not recover installed base model");
+    const auto english=mac.getChildFile("ggml-base.en.bin");
+    check(english.replaceWithText("fixture"),"Cannot write English fixture");
+    check(modelLocation::resolve(missing,mac,legacy)==english,"English-only default not preferred");
+    check(modelLocation::resolve(english,mac,legacy,true)==base,"Dutch selected an English-only model");
     check(chosen.replaceWithText("fixture"),"Cannot write custom fixture");
     check(modelLocation::resolve(chosen,mac,legacy)==chosen && modelLocation::pickerDirectory(chosen,mac)==custom,"Custom model selection was lost");
     const auto signature=modelLocation::signature(base); base.appendText(" changed");
@@ -89,8 +93,9 @@ void tapCaptureIntegration() {
     std::unique_ptr<juce::AudioProcessor> processor(createPluginFilter()); processor->setPlayHead(&transport); processor->prepareToPlay(48000,512);
     std::unique_ptr<juce::AudioProcessorEditor> editor(processor->createEditor()); auto* panel=editor->getChildComponent(0);
     auto* tap=dynamic_cast<juce::TextButton*>(panel->findChildWithID("tapTempo"));
-    auto* use=dynamic_cast<juce::TextButton*>(panel->findChildWithID("useTapTempo"));
-    check(tap && use,"Tap controls missing");
+    auto* use=dynamic_cast<juce::TextButton*>(panel->findChildWithID("stopTapTempo"));
+    auto* other=dynamic_cast<juce::TextButton*>(panel->findChildWithID("otherTapTempo"));
+    check(tap && use && other,"Tap controls missing");
     juce::AudioBuffer<float> audio(2,512); juce::MidiBuffer midi; double seconds=0;
     auto feed=[&] {
         transport.info.setTimeInSeconds(seconds);
@@ -104,7 +109,7 @@ void tapCaptureIntegration() {
         int count=0; for(const auto& node:root) if(node.hasType("Bar")) ++count; return count;
     };
     TapTempo expectedTaps; expectedTaps.tap(juce::Time::getMillisecondCounterHiRes(),4,4); tap->onClick(); feed();
-    for(int i=0;i<3;++i) { juce::Thread::sleep(250); expectedTaps.tap(juce::Time::getMillisecondCounterHiRes(),4,4); tap->onClick(); feed(); }
+    for(int i=0;i<3;++i) { juce::Thread::sleep(250); expectedTaps.tap(juce::Time::getMillisecondCounterHiRes(),4,4); other->onClick(); feed(); }
     check(bars()==0,"Recording continued while tapping"); use->onClick();
     for(int i=0;i<4;++i) feed(); juce::Thread::sleep(30);
     check(bars()==0,"Recording started before replay");
@@ -116,6 +121,14 @@ void tapCaptureIntegration() {
     processor->releaseResources(); processor->setPlayHead(nullptr);
 }
 void recordedTimeline() {
+    TraceDocument tapped; music::Grid marked; tapped.touch(marked,10.); tapped.edit(0,"C | G | Am | F","One | two | three | four");
+    BarTapSession pass; pass.downbeat(0,10,3,4); pass.other(500,10.5); pass.other(1100,11.1); pass.downbeat(1800,11.8,3,4);
+    tapped.installTapGuide(pass.guide(0,0,1800,11.8),2);
+    auto mapped=tapped.positionAt(10.7); auto kept=tapped.snapshot();
+    check(mapped && music::beatNumber(*mapped)==1,"Tapped beat map was not installed");
+    check(kept.size()==1 && kept[0].numerator==3 && kept[0].words[2]=="three four" && kept[0].chords[2]=="Am F","Tap remapping lost manual corrections");
+    check(std::abs(kept[0].seconds-10.)<.001,"Rubato changed the saved bar start");
+
     TraceDocument document; music::Grid grid;
     document.touch(grid,10.,0,.125);
     grid.quarter=.25; grid.bpm=90; document.touch(grid,10.125,0,.125);
@@ -196,8 +209,14 @@ int main() try {
     check(!basicText.contains("BPM") && !basicText.contains("Bar ") && !basicText.contains("Editable draft") && !basicText.contains("Should not be printed"),"Basic export included metadata");
     auto* basicTable=basicXml->getChildByName("w:body")->getChildByName("w:tbl");
     auto* basicLyrics=basicTable->getChildByName("w:tr")->getNextElementWithTagName("w:tr");
-    check(basicLyrics && basicLyrics->getNumChildElements()==4,"Basic export lost beat columns");
-    for(int beat=0;beat<4;++beat) check(basicLyrics->getChildElement(beat)->getAllSubText()==expected[beat],"Basic export misplaced lyrics");
+    check(basicLyrics && basicLyrics->getNumChildElements()>=3,"Basic export lost lyrics");
+    check(basicLyrics->getChildElement(0)->getAllSubText()=="My body","Basic export retained empty beat spacing");
+    LeadBar first; first.numerator=4; first.words={"We","walk","through","the"}; first.chords={"C","","G",""}; first.lyrics="We walk through the";
+    LeadBar second=first; second.words={"quiet","night.","",""}; second.chords={"Am","F","",""}; second.lyrics="quiet night.";
+    const auto flowing=documentExport::makeDocument({first,second},"",documentExport::Style::basic);
+    auto flowXml=juce::parseXML(flowing); auto* flowBody=flowXml->getChildByName("w:body");
+    int lines=0; for(auto* child:flowBody->getChildIterator()) if(child->hasTagName("w:tbl")) ++lines;
+    check(lines==1 && flowing.contains("quiet") && flowing.contains("Am"),"Basic export did not join a phrase across bars");
     auto image=editor->createComponentSnapshot(editor->getLocalBounds()); auto stream=juce::File::getCurrentWorkingDirectory().getChildFile("ui-preview.png").createOutputStream();
     check(stream!=nullptr,"Cannot write preview"); stream->setPosition(0); stream->truncate(); check(juce::PNGImageFormat().writeImageToStream(image,*stream),"Cannot render editor");
     std::cout<<"Float/double silence, capture before mute, silent bypass callbacks, lead-sheet edits/recall, timing modes, UI scales, DOCX XML and actual editor preview passed\n";

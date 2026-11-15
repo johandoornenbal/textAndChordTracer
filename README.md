@@ -35,20 +35,9 @@ is recommended. See [REAPER routing](docs/REAPER.md).
 
 ## Tap tempo before recording
 
-Use **Tap tempo** to estimate a starting indication without recording the tapping
-pass. The first tap pauses analysis capture. Tap once per beat in the selected
-meter: **4/4 needs four quarter-note taps; 6/8 needs six eighth-note taps**.
-At least one bar's worth of taps is required; additional taps improve the estimate.
-Accidental rapid double-clicks are ignored. Changing the meter starts a fresh
-sequence. **Cancel tap** disarms tracing without deleting your lead sheet.
+Tap **Bar start** on the first count of each bar and **Other beat** on every remaining count. Continue for several bars, then press **Stop**. In 4/4 use one left and three middle taps; in 6/8 use one left and five middle taps. Capture pauses throughout tapping and waits for you to stop/restart or seek before recording again. **Cancel tap** disarms tracing.
 
-Choose **Use tempo** when ready. This applies the estimate, selects Hint + follow,
-and waits for you to stop/restart playback or seek to the replay position. Capture
-stays paused if the current playback simply continues. **Record now** is an
-explicit alternative if you want to start immediately. Audio output remains muted
-throughout. The tempo and meter are saved with the session; the transient tapping
-session is not. Your existing notes and timing map are kept; use New take first if
-you want to rebuild previously traced timing from the tap indication.
+Tap while the DAW plays to save bar and beat positions. Replay uses these positions to organise the lead sheet, including local tempo changes. A closed bar with missing middle counts is divided evenly using its selected meter. Automatic results from the first tapped bar are rebuilt on replay; manual corrections are retained. Tapping without playback sets only a tempo indication. Audio output remains muted.
 
 The tempo hint accepts **10–300 quarter-note BPM**, including songs below 40 BPM.
 Tap intervals use the meter's beat unit and are converted into this quarter-note
@@ -122,17 +111,12 @@ key is required. A multilingual model file is required; instrumental audio is no
 a substitute for a clean vocal. Whisper is a speech recogniser, so sustained
 singing, backing vocals, loud accompaniment and repeated phrases may yield missing
 or incorrect words. There is no built-in source separation or singer separation.
-The engine auto-detects language and keeps the original language.
+Choose **English** (the default) or **Dutch** to guide transcription.
 
-The Mac installation script downloads the multilingual **base** model (~142 MiB)
-and verifies its upstream checksum. **Speech model...** lets you select a model
-file. A larger `small` model may improve results at greater CPU and memory cost:
+The Mac installation script downloads **base.en**, the English-only model, by default and also installs or reuses multilingual **base** for Dutch. Switching language selects the corresponding saved model. Dutch requires a multilingual model; English-only models cannot transcribe Dutch. Both downloads are checksum verified.
 
-```sh
-bash scripts/download-model.sh small
-```
+For a larger optional model, run `bash scripts/download-model.sh small.en` for English or `bash scripts/download-model.sh small` for Dutch, then choose it with **Speech model...**. Larger models use more CPU and memory and may improve recognition.
 
-Select that file with **Speech model...** afterwards. `tiny` is also supported.
 Models live in:
 `~/Library/Application Support/Doornenbal Audio/TextAndChordTracer/models/`.
 The picker opens this folder even when it is empty. Installed base, small or tiny
@@ -145,8 +129,8 @@ without a model.
 
 **Export Word / Docs...** saves a native `.docx` lead sheet with chords above
 lyrics. The export menu offers **Basic** (chords and lyrics only) and **Detailed**
-(title, bar numbers, meter and tempo). Both preserve the beat cells you edited.
-Plain lyric corrections without separators span the bar. XML text is escaped and the file is written
+(title, bar numbers, meter and tempo). Basic flows across bars into poem-like lyric lines, with chords above their corresponding words, using punctuation and sensible line lengths. Detailed preserves the beat cells you edited.
+Plain lyric corrections without separators span the bar in Detailed. XML text is escaped and the file is written
 through a temporary file before replacement. Open it directly in Microsoft Word.
 For Google Docs, upload the same `.docx` to Google Drive and choose **Open with >
 Google Docs**. The plugin does not sign into Google or upload documents itself.
@@ -163,7 +147,7 @@ bash scripts/build-sign-install-mac.sh
 ```
 
 This fetches pinned JUCE and whisper.cpp sources, builds and tests the plugin,
-downloads the base speech model, ad-hoc signs a staged bundle, verifies it, then
+downloads the English base.en and Dutch base speech models, ad-hoc signs a staged bundle, verifies it, then
 installs to `~/Library/Audio/Plug-Ins/VST3/Text and Chord Tracer.vst3`.
 An existing installation is preserved until the staged copy passes verification;
 replacement failure attempts to restore it. No sudo is used. Restart/rescan the

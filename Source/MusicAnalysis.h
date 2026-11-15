@@ -38,4 +38,6 @@ struct Grid {
 };
 inline long long barNumber(const Grid& grid) { return static_cast<long long>(std::floor((grid.quarter-grid.originQuarter)/grid.barLength())+grid.originBar); }
 inline int beatNumber(const Grid& grid) { return std::clamp(static_cast<int>(std::floor((grid.quarter-grid.originQuarter-(barNumber(grid)-grid.originBar)*grid.barLength())/grid.beatLength()+.0001)),0,grid.numerator-1); }
+struct TimedGrid { double seconds=0,end=0; Grid grid; };
+
 }
