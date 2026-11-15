@@ -50,6 +50,15 @@ independent chord votes. A clean accompaniment can outperform the full mix,
 particularly when bass lines, lead instruments and drums obscure chord tones.
 If they play different voicings or substitutions, audition one at a time.
 
+## Tap tempo before the take
+
+Set the meter, then tap once per beat: four taps in 4/4 or six eighth-note taps in
+6/8. Capture pauses from the first tap. Use tempo applies the estimate as a moving
+hint and waits for a playback restart or reposition. Stop/return to the intended
+point and replay. Record now is the explicit way to bypass that wait. Existing
+notes are kept; choose New take before tapping to build a fresh timing map.
+Tempo indications below 40 BPM are supported, down to 10 quarter-note BPM.
+
 ## Playback and export
 
 Keep the analysis track active while playing. A background transcription pass can

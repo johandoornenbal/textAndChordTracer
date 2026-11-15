@@ -4,6 +4,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <iterator>
 struct LeadBar {
     long long number=0;
     double quarter=0,seconds=0,bpm=120;
@@ -120,7 +121,7 @@ public:
             LeadBar bar; bar.number=static_cast<juce::int64>(node.getProperty("number",0));
             auto finite=[](double value,double fallback) { return std::isfinite(value)?value:fallback; };
             bar.quarter=finite(node.getProperty("quarter",0.),0.); bar.seconds=finite(node.getProperty("seconds",0.),0.);
-            bar.bpm=std::clamp(finite(node.getProperty("bpm",120.),120.),30.,300.);
+            bar.bpm=std::clamp(finite(node.getProperty("bpm",120.),120.),10.,300.);
             bar.numerator=juce::jlimit(1,12,static_cast<int>(node.getProperty("numerator",4)));
             bar.denominator=static_cast<int>(node.getProperty("denominator",4)); if(bar.denominator!=4 && bar.denominator!=8 && bar.denominator!=16) bar.denominator=4;
             bar.lyrics=node.getProperty("lyrics").toString().substring(0,4096); bar.lyricsEdited=node.getProperty("edited",false); bar.chordsEdited=node.getProperty("chordsEdited",false); bar.lyricsBeatAligned=node.getProperty("lyricBeats",false);
@@ -134,7 +135,7 @@ public:
             grid.numerator=juce::jlimit(1,12,static_cast<int>(point.getProperty("numerator",4)));
             grid.denominator=static_cast<int>(point.getProperty("denominator",4));
             grid.originQuarter=point.getProperty("originQuarter",0.); grid.originBar=static_cast<juce::int64>(point.getProperty("originBar",0));
-            if(!std::isfinite(seconds) || !std::isfinite(end) || end<=seconds || end-seconds>120. || !std::isfinite(grid.quarter) || !std::isfinite(grid.originQuarter) || !std::isfinite(grid.bpm) || grid.bpm<30. || grid.bpm>300.) continue;
+            if(!std::isfinite(seconds) || !std::isfinite(end) || end<=seconds || end-seconds>120. || !std::isfinite(grid.quarter) || !std::isfinite(grid.originQuarter) || !std::isfinite(grid.bpm) || grid.bpm<10. || grid.bpm>300.) continue;
             if(grid.denominator!=1 && grid.denominator!=2 && grid.denominator!=4 && grid.denominator!=8 && grid.denominator!=16 && grid.denominator!=32) continue;
             positions[seconds]={end,grid};
         }

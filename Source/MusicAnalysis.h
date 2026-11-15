@@ -22,7 +22,8 @@ public:
     int meter(double bpm) const;
     void reset() { *this=TempoEstimator{}; }
 private:
-    std::array<double,512> novelty{};
+    static constexpr int historySize=4096;
+    std::array<double,historySize> novelty{};
     int head=0,count=0;
     double previous=0;
 };

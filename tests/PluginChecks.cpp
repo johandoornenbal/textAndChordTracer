@@ -2,6 +2,7 @@
 #include "../Source/TraceModel.h"
 #include "../Source/DocumentExport.h"
 #include "../Source/ModelLocation.h"
+#include "../Source/TapTempo.h"
 #include <iostream>
 #include <stdexcept>
 void check(bool value,const char* message) { if(!value) throw std::runtime_error(message); }
@@ -79,6 +80,41 @@ void modelPaths() {
     const auto signature=modelLocation::signature(base); base.appendText(" changed");
     check(signature!=modelLocation::signature(base),"Model replacement did not change retry signature");
 }
+void tapCaptureIntegration() {
+    struct Transport : juce::AudioPlayHead {
+        PositionInfo info;
+        juce::Optional<PositionInfo> getPosition() const override { return info; }
+    } transport;
+    transport.info.setIsPlaying(true);
+    std::unique_ptr<juce::AudioProcessor> processor(createPluginFilter()); processor->setPlayHead(&transport); processor->prepareToPlay(48000,512);
+    std::unique_ptr<juce::AudioProcessorEditor> editor(processor->createEditor()); auto* panel=editor->getChildComponent(0);
+    auto* tap=dynamic_cast<juce::TextButton*>(panel->findChildWithID("tapTempo"));
+    auto* use=dynamic_cast<juce::TextButton*>(panel->findChildWithID("useTapTempo"));
+    check(tap && use,"Tap controls missing");
+    juce::AudioBuffer<float> audio(2,512); juce::MidiBuffer midi; double seconds=0;
+    auto feed=[&] {
+        transport.info.setTimeInSeconds(seconds);
+        for(int ch=0;ch<2;++ch) for(int i=0;i<512;++i) audio.setSample(ch,i,.1f);
+        processor->processBlock(audio,midi); check(audio.getMagnitude(0,512)==0.f,"Tap mode leaked audio"); seconds+=512./48000.;
+    };
+    auto bars=[&] {
+        juce::MemoryBlock bytes; processor->getStateInformation(bytes);
+        auto xml=juce::AudioProcessor::getXmlFromBinary(bytes.getData(),static_cast<int>(bytes.getSize()));
+        auto root=juce::ValueTree::fromXml(*xml).getChildWithName("LeadSheet");
+        int count=0; for(const auto& node:root) if(node.hasType("Bar")) ++count; return count;
+    };
+    TapTempo expectedTaps; expectedTaps.tap(juce::Time::getMillisecondCounterHiRes(),4,4); tap->onClick(); feed();
+    for(int i=0;i<3;++i) { juce::Thread::sleep(250); expectedTaps.tap(juce::Time::getMillisecondCounterHiRes(),4,4); tap->onClick(); feed(); }
+    check(bars()==0,"Recording continued while tapping"); use->onClick();
+    for(int i=0;i<4;++i) feed(); juce::Thread::sleep(30);
+    check(bars()==0,"Recording started before replay");
+    auto* bpm=dynamic_cast<juce::RangedAudioParameter*>(processor->getParameters()[2]);
+    check(bpm && std::abs(bpm->convertFrom0to1(bpm->getValue())-expectedTaps.quarterBpm())<2.,"Tap estimate did not reach the tempo parameter");
+    transport.info.setIsPlaying(false); feed(); transport.info.setIsPlaying(true); seconds=0; feed();
+    for(int retry=0;retry<100 && bars()==0;++retry) juce::Thread::sleep(5);
+    check(bars()>0,"Recording did not resume after replay");
+    processor->releaseResources(); processor->setPlayHead(nullptr);
+}
 void recordedTimeline() {
     TraceDocument document; music::Grid grid;
     document.touch(grid,10.,0,.125);
@@ -98,9 +134,12 @@ void recordedTimeline() {
     TraceDocument migrated; migrated.restore(legacy.save()); known=migrated.positionAt(1.);
     check(known && std::abs(known->quarter-2.)<1.e-6 && !migrated.positionAt(2.1),"Old bar-anchor migration failed");
     restored.clear(); check(!restored.positionAt(10.2),"New take retained the old timeline map");
+    TraceDocument slow; music::Grid slowGrid; slowGrid.bpm=24.; slow.touch(slowGrid,0.,0,.125);
+    restored.restore(slow.save()); const auto slowPosition=restored.positionAt(.05);
+    check(restored.snapshot()[0].bpm==24. && slowPosition && slowPosition->bpm==24.,"Session recall clamped a slow tempo");
 }
 int main() try {
-    juce::ScopedJuceInitialiser_GUI init; recordedTimeline(); modelPaths(); silentOutput(); captureBeforeMute();
+    juce::ScopedJuceInitialiser_GUI init; tapCaptureIntegration(); recordedTimeline(); modelPaths(); silentOutput(); captureBeforeMute();
     TraceDocument document; music::Grid grid; grid.bpm=112; grid.numerator=4;
     for(int bar=0;bar<6;++bar) {
         grid.quarter=bar*4.; document.touch(grid,bar*2.);

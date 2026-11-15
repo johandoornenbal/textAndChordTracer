@@ -33,6 +33,29 @@ There is no time stretching or quantisation of the audible performance.
 For REAPER, a dedicated analysis track with separate instrument and vocal sends
 is recommended. See [REAPER routing](docs/REAPER.md).
 
+## Tap tempo before recording
+
+Use **Tap tempo** to estimate a starting indication without recording the tapping
+pass. The first tap pauses analysis capture. Tap once per beat in the selected
+meter: **4/4 needs four quarter-note taps; 6/8 needs six eighth-note taps**.
+At least one bar's worth of taps is required; additional taps improve the estimate.
+Accidental rapid double-clicks are ignored. Changing the meter starts a fresh
+sequence. **Cancel tap** disarms tracing without deleting your lead sheet.
+
+Choose **Use tempo** when ready. This applies the estimate, selects Hint + follow,
+and waits for you to stop/restart playback or seek to the replay position. Capture
+stays paused if the current playback simply continues. **Record now** is an
+explicit alternative if you want to start immediately. Audio output remains muted
+throughout. The tempo and meter are saved with the session; the transient tapping
+session is not. Your existing notes and timing map are kept; use New take first if
+you want to rebuild previously traced timing from the tap indication.
+
+The tempo hint accepts **10–300 quarter-note BPM**, including songs below 40 BPM.
+Tap intervals use the meter's beat unit and are converted into this quarter-note
+indication. For example, six eighth-note taps 500 ms apart in 6/8 describe a
+three-second bar and a **60 quarter-note BPM** indication. The estimate remains a
+hint: timing can continue following the performance after replay begins.
+
 ## Capturing lyrics and chords
 
 1. Insert **Text and Chord Tracer** on the stereo full mix or an analysis bus and
@@ -120,9 +143,8 @@ without a model.
 
 ## Word and Google Docs export
 
-**Export Word / Docs...** creates a native `.docx` file containing the song title,
-measure numbers, local tempo/meter indications, chord cells, and lyrics underneath.
-The export menu offers **Basic** (chords and lyrics only) and **Detailed**
+**Export Word / Docs...** saves a native `.docx` lead sheet with chords above
+lyrics. The export menu offers **Basic** (chords and lyrics only) and **Detailed**
 (title, bar numbers, meter and tempo). Both preserve the beat cells you edited.
 Plain lyric corrections without separators span the bar. XML text is escaped and the file is written
 through a temporary file before replacement. Open it directly in Microsoft Word.

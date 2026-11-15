@@ -67,30 +67,35 @@ void TempoEstimator::push(double energy) {
 double TempoEstimator::estimate(double hint) const {
     if(count<300) return 0;
     double best=0,bpm=0,strength=0;
-    for(int lag=11;lag<=70;++lag) {
+    for(int lag=9;lag<=282;++lag) {
+        if(count<3*lag) continue;
+        const int window=std::min(count,std::max(300,8*lag));
         double sum=0,a=0,b=0;
-        for(int i=lag;i<count;++i) {
-            const double x=novelty[static_cast<size_t>((head-1-i+1024)%512)],y=novelty[static_cast<size_t>((head-1-i+lag+1024)%512)];
+        for(int i=lag;i<window;++i) {
+            const double x=novelty[static_cast<size_t>((head-1-i+historySize*2)%historySize)],y=novelty[static_cast<size_t>((head-1-i+lag+historySize*2)%historySize)];
             sum+=x*y; a+=x*x; b+=y*y;
         }
         const auto correlation=sum/std::sqrt(std::max(1.e-20,a*b));
         const auto candidate=60.*analysisRate/(256.*lag);
-        const auto score=correlation*std::exp(-.5*std::pow(std::log2(candidate/std::max(30.,hint))/.7,2.));
+        const auto score=correlation*std::exp(-.5*std::pow(std::log2(candidate/std::max(10.,hint))/.7,2.));
         if(score>best) { best=score; bpm=candidate; strength=correlation; }
     }
-    return strength>.25?bpm:0;
+    return strength>.25?std::clamp(bpm,10.,300.):0;
 }
 }
 
 int music::TempoEstimator::meter(double bpm) const {
-    if(count<400 || bpm<=0) return 0;
+    if(count<300 || bpm<=0) return 0;
+    const int beatLag=static_cast<int>(std::round(60.*analysisRate/(256.*bpm)));
+    if(count<8*beatLag) return 0;
+    const int window=std::min(count,12*beatLag);
     double best=0,second=0; int beats=0;
     for(int n:{3,4}) {
         const int lag=static_cast<int>(std::round(n*60.*analysisRate/(256.*bpm)));
-        if(lag>=count/2) continue;
+        if(lag>=window/2) continue;
         double sum=0,a=0,b=0;
-        for(int i=lag;i<count;++i) {
-            const auto x=novelty[static_cast<size_t>((head-1-i+1024)%512)],y=novelty[static_cast<size_t>((head-1-i+lag+1024)%512)];
+        for(int i=lag;i<window;++i) {
+            const auto x=novelty[static_cast<size_t>((head-1-i+historySize*2)%historySize)],y=novelty[static_cast<size_t>((head-1-i+lag+historySize*2)%historySize)];
             sum+=x*y; a+=x*x; b+=y*y;
         }
         const double score=sum/std::sqrt(std::max(1.e-20,a*b));

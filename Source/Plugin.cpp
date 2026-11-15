@@ -2,6 +2,7 @@
 #include "TraceWorker.h"
 #include "DocumentExport.h"
 #include "ModelLocation.h"
+#include "TapTempo.h"
 class TracerProcessor final : public juce::AudioProcessor,private juce::Timer {
 public:
     TracerProcessor():AudioProcessor(BusesProperties().withInput("Music",juce::AudioChannelSet::stereo(),true)
@@ -20,7 +21,7 @@ public:
         juce::AudioProcessorValueTreeState::ParameterLayout p;
         p.add(std::make_unique<juce::AudioParameterBool>(juce::ParameterID{"trace",1},"Trace playback",true));
         p.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"timingMode",1},"Timing mode",juce::StringArray{"Detect","Hint + follow","DAW"},0));
-        p.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"bpmHint",1},"Approximate tempo",juce::NormalisableRange<float>(40,220,1),120));
+        p.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"bpmHint",1},"Approximate tempo",juce::NormalisableRange<float>(10,300,.1f),120));
         p.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"beatsHint",1},"Beats per bar hint",2,12,4));
         p.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"unitHint",1},"Beat unit hint",juce::StringArray{"4","8","16"},0));
         return p;
@@ -28,7 +29,7 @@ public:
     bool isBusesLayoutSupported(const BusesLayout& layout) const override {
         return layout.inputBuses.size()==2 && layout.outputBuses.size()==1 && layout.getMainInputChannelSet()==juce::AudioChannelSet::stereo() && layout.getMainOutputChannelSet()==juce::AudioChannelSet::stereo() && (layout.inputBuses[1].isDisabled() || layout.inputBuses[1]==juce::AudioChannelSet::stereo());
     }
-    void prepareToPlay(double sampleRate,int maximumBlockSize) override { rate=sampleRate; fallbackSeconds=0; callbackTimeout=juce::jmax(.5,2.*maximumBlockSize/sampleRate); }
+    void prepareToPlay(double sampleRate,int maximumBlockSize) override { rate=sampleRate; fallbackSeconds=0; tapGate.resetTransport(); callbackTimeout=juce::jmax(.5,2.*maximumBlockSize/sampleRate); }
     void releaseResources() override { stopCapture(); }
     void stopCapture() { worker.finishRequested=true; }
     template<class T> void capture(juce::AudioBuffer<T>& buffer) {
@@ -46,12 +47,12 @@ public:
         }
         const int timing=juce::roundToInt(mode->load());
         if(timing!=2) { grid.numerator=juce::roundToInt(numerator->load()); grid.denominator=4<<juce::roundToInt(denominator->load()); }
-        playing=playing && enabled->load()>.5f;
+        playing=tapGate.permit(playing,seconds,main.getNumSamples()/rate) && enabled->load()>.5f;
         // Copy analysis inputs first; output is silenced only after capture completes.
         for(int offset=0;offset<main.getNumSamples();offset+=512) {
             AudioCapture packet; packet.count=juce::jmin(512,main.getNumSamples()-offset); packet.rate=rate;
             packet.playing=playing; packet.generation=worker.generation.load(); packet.mode=timing; packet.hint=bpm->load();
-            packet.seconds=seconds+offset/rate; packet.host=grid; packet.host.quarter+=offset/rate*grid.bpm/60;
+            packet.hintRevision=hintRevision.load(); packet.seconds=seconds+offset/rate; packet.host=grid; packet.host.quarter+=offset/rate*grid.bpm/60;
             if(playing) for(int i=0;i<packet.count;++i) {
                 auto index=static_cast<size_t>(i); auto l=main.getSample(0,offset+i),r=main.getSample(1,offset+i);
                 packet.left[index]=static_cast<float>(l); packet.right[index]=static_cast<float>(r);
@@ -80,16 +81,34 @@ public:
     }
     void setStateInformation(const void* data,int length) override {
         if(auto xml=getXmlFromBinary(data,length);xml && xml->hasTagName("TextAndChordTracer")) {
-            auto saved=juce::ValueTree::fromXml(*xml); worker.newTake(); worker.document.restore(saved.getChildWithName("LeadSheet"));
+            auto saved=juce::ValueTree::fromXml(*xml); tapGate.recordNow(); tapTempo.reset(); worker.newTake(); worker.document.restore(saved.getChildWithName("LeadSheet"));
             uiSize=juce::jlimit(1,3,static_cast<int>(saved.getProperty("uiSize",2))); title=saved.getProperty("title","Untitled song").toString().substring(0,200);
             auto path=modelLocation::find(juce::File(saved.getProperty("modelPath",defaultModel().getFullPathName()).toString())).getFullPathName();
             if(path!=modelPath) { modelPath=path; if(juce::File(path).existsAsFile()) chooseModel(juce::File(path)); }
             saved.removeChild(saved.getChildWithName("LeadSheet"),nullptr); state.replaceState(saved);
         }
     }
+    void tap(double milliseconds) {
+        if(!tapGate.isTapping()) { tapTempo.reset(); tapGate.begin(); worker.finishRequested=true; }
+        tapTempo.tap(milliseconds,juce::roundToInt(numerator->load()),4<<juce::roundToInt(denominator->load()));
+    }
+    void cancelTapping() {
+        auto* parameter=state.getParameter("trace"); parameter->beginChangeGesture(); parameter->setValueNotifyingHost(0); parameter->endChangeGesture();
+        tapGate.recordNow(); tapTempo.reset(); worker.finishRequested=true;
+    }
+    bool useTappedTempo() {
+        if(!tapTempo.ready(juce::roundToInt(numerator->load()),4<<juce::roundToInt(denominator->load()))) return false;
+        auto set=[this](const char* id,float value) {
+            auto* parameter=state.getParameter(id); parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost(parameter->convertTo0to1(value)); parameter->endChangeGesture();
+        };
+        set("bpmHint",static_cast<float>(tapTempo.quarterBpm())); set("timingMode",1); set("trace",1);
+        ++hintRevision; tapGate.finish(); return true;
+    }
     void chooseModel(const juce::File& file) { modelPath=file.getFullPathName(); lastModelAttempt=modelLocation::signature(file); worker.requestModel(modelPath); updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true)); }
     juce::AudioProcessorValueTreeState state;
     TraceWorker worker;
+    TapTempo tapTempo; TapCaptureGate tapGate;
     int uiSize=2; juce::String title="Untitled song",modelPath;
 private:
     void timerCallback() override {
@@ -97,11 +116,13 @@ private:
             const auto file=modelLocation::find(juce::File(modelPath));
             if(file.existsAsFile() && modelLocation::signature(file)!=lastModelAttempt) chooseModel(file);
         }
+        if((juce::Time::getMillisecondCounter()-lastCallback.load())*.001>callbackTimeout) tapGate.hostWentIdle();
         if(worker.capturing.load() && (enabled->load()<.5f || (juce::Time::getMillisecondCounter()-lastCallback.load())*.001>callbackTimeout)) worker.finishRequested=true; const auto value=worker.document.revision.load(); if(value!=lastRevision) { lastRevision=value; updateHostDisplay(ChangeDetails{}.withNonParameterStateChanged(true)); } }
     std::atomic<float>* enabled=nullptr; std::atomic<float>* mode=nullptr; std::atomic<float>* bpm=nullptr;
     std::atomic<float>* numerator=nullptr; std::atomic<float>* denominator=nullptr;
     double rate=48000,fallbackSeconds=0,callbackTimeout=.5; unsigned lastRevision=0;
     std::atomic<juce::uint32> lastCallback{0};
+    std::atomic<unsigned> hintRevision{0};
     juce::String lastModelAttempt;
 };
 namespace theme { const juce::Colour cream{0xfff4eddb},ink{0xff252b29},gold{0xffd7ac61},muted{0xff99a192}; }
@@ -143,16 +164,20 @@ class TracerPanel final : public juce::Component,private juce::Timer {
 public:
     explicit TracerPanel(TracerProcessor& p):processor(p) {
         using namespace theme;
-        for(auto* button:{&trace,&newTake,&model,&exportWord,&follow}) {
+        for(auto* button:{&trace,&newTake,&model,&exportWord,&follow,&tap,&useTap}) {
             addAndMakeVisible(*button); button->setColour(juce::TextButton::buttonColourId,ink.brighter(.12f)); button->setColour(juce::TextButton::textColourOffId,cream); button->setColour(juce::TextButton::textColourOnId,gold);
         }
         trace.setComponentID("trace"); trace.setClickingTogglesState(true); trace.setButtonText("Trace playback");
-        trace.onClick=[this] { if(!trace.getToggleState()) processor.worker.finishRequested=true; };
+        trace.onClick=[this] { if(processor.tapGate.isTapping() || processor.tapGate.isWaiting()) processor.cancelTapping(); else if(!trace.getToggleState()) processor.worker.finishRequested=true; };
         traceAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment>(processor.state,"trace",trace);
         newTake.setButtonText("New take"); newTake.onClick=[this] { processor.worker.newTake(); };
         model.setComponentID("speechModel"); model.setButtonText("Speech model..."); model.setTooltip("Choose a model from "+modelLocation::directory().getFullPathName()); model.onClick=[this] { selectModel(); };
         exportWord.setButtonText("Export Word / Docs..."); exportWord.setComponentID("export"); exportWord.onClick=[this] { exportDocument(); };
         exportWord.setTooltip("Choose Basic (chords/lyrics only) or Detailed (bar numbers/meter/tempo), then save a Word .docx. For Google Docs, upload the file to Drive and open it with Google Docs.");
+        tap.setComponentID("tapTempo"); tap.setButtonText("Tap tempo"); tap.setTooltip("Tap once per meter beat: four taps in 4/4, six eighth-note taps in 6/8. Capture stays paused until you use the tempo and restart playback.");
+        tap.onClick=[this] { processor.tap(juce::Time::getMillisecondCounterHiRes()); refresh(); };
+        useTap.setComponentID("useTapTempo"); useTap.setButtonText("Use tempo");
+        useTap.onClick=[this] { if(processor.tapGate.isWaiting()) processor.tapGate.recordNow(); else processor.useTappedTempo(); refresh(); };
         follow.setButtonText("Follow: ON"); follow.setClickingTogglesState(true); follow.setToggleState(true,juce::dontSendNotification);
         follow.onClick=[this] { follow.setButtonText(follow.getToggleState()?"Follow: ON":"Follow: OFF"); };
         addAndMakeVisible(timing); timing.addItemList({"Detect","Hint + follow","DAW"},1); timing.setComponentID("timingMode");
@@ -180,14 +205,14 @@ public:
         sizes.setBounds(680,15,184,28); title.setBounds(32,100,500,30); model.setBounds(548,100,146,30); exportWord.setBounds(706,100,158,30);
         trace.setBounds(32,158,140,30); newTake.setBounds(184,158,104,30); timing.setBounds(310,158,152,30);
         tempo.setBounds(514,158,178,30); beats.setBounds(716,158,78,30); unit.setBounds(802,158,62,30);
-        timingStatus.setBounds(32,199,690,27); follow.setBounds(736,199,128,27); viewport.setBounds(32,242,836,470); status.setBounds(32,728,832,52);
+        timingStatus.setBounds(32,199,520,27); tap.setBounds(566,199,78,27); useTap.setBounds(650,199,74,27); follow.setBounds(736,199,128,27); viewport.setBounds(32,242,836,470); status.setBounds(32,728,832,52);
     }
     void paint(juce::Graphics& g) override {
         using namespace theme; g.fillAll(cream); g.setColour(ink); g.setFont(juce::FontOptions(11.f));
         g.drawText("YODO AUDIO    /    LIVE SONG NOTEBOOK    /    OUTPUT MUTED",32,14,610,25,juce::Justification::left);
         g.setFont(juce::FontOptions(33.f)); g.drawText("Text and Chord Tracer",30,45,700,44,juce::Justification::left);
         g.setGradientFill(juce::ColourGradient(juce::Colour(0xff343d36),0,144,juce::Colour(0xff1e2722),0,786,false)); g.fillRoundedRectangle(16,144,868,642,16);
-        g.setColour(gold); g.setFont(juce::FontOptions(10.f)); g.drawText("TEMPO",470,158,44,30,juce::Justification::left); g.drawText("METER",716,146,80,12,juce::Justification::left); g.drawText("/",794,158,8,30,juce::Justification::centred);
+        g.setColour(gold); g.setFont(juce::FontOptions(10.f)); g.drawText("Q BPM",470,158,44,30,juce::Justification::left); g.drawText("METER",716,146,80,12,juce::Justification::left); g.drawText("/",794,158,8,30,juce::Justification::centred);
         g.setColour(ink.withAlpha(.7f)); g.setFont(juce::FontOptions(10.f));
         g.drawText("ANALYSIS ONLY  /  OUTPUT MUTED  /  LOCAL TRANSCRIPTION",32,800,600,20,juce::Justification::left);
         g.drawText("DOUBLE-CLICK A BAR TO EDIT",600,800,264,20,juce::Justification::right);
@@ -212,6 +237,20 @@ public:
         }
         const auto bpm=processor.worker.detectedBpm.load();
         timingStatus.setText((processor.worker.capturing.load()?"TRACING":"READY")+juce::String("   /   ")+(timing.getSelectedId()==3 && processor.worker.usingHost.load()?"DAW grid":bpm>0?"~"+juce::String(bpm,1)+" BPM":"Listening for a steady pulse")+"   /   Bar grid is provisional",juce::dontSendNotification);
+        const bool tapping=processor.tapGate.isTapping(),waiting=processor.tapGate.isWaiting();
+        trace.setButtonText(tapping || waiting?"Cancel tap":"Trace playback");
+        const int beats=juce::roundToInt(processor.state.getRawParameterValue("beatsHint")->load());
+        const int beatUnit=4<<juce::roundToInt(processor.state.getRawParameterValue("unitHint")->load());
+        if(tapping && !processor.tapTempo.matchesMeter(beats,beatUnit)) processor.tapTempo.reset();
+        tap.setButtonText(tapping?"Tap "+juce::String(processor.tapTempo.count())+"/"+juce::String(beats):"Tap tempo");
+        useTap.setVisible(tapping || waiting); useTap.setEnabled(waiting || processor.tapTempo.ready(beats,beatUnit));
+        useTap.setButtonText(waiting?"Record now":"Use tempo");
+        useTap.setTooltip(waiting?"Start tracing immediately instead of waiting for a transport restart.":"Apply the tap estimate as a moving tempo hint. Tracing waits until you restart playback.");
+        if(tapping) {
+            auto text="TAPPING - capture paused  /  "+juce::String(processor.tapTempo.count())+" of "+juce::String(beats)+" taps";
+            if(processor.tapTempo.quarterBpm()>0) text+="  /  ~"+juce::String(processor.tapTempo.quarterBpm(),1)+" quarter BPM";
+            timingStatus.setText(text,juce::dontSendNotification);
+        } else if(waiting) timingStatus.setText("Tempo set - restart playback to trace (or choose Record now)",juce::dontSendNotification);
         auto message=processor.worker.status();
         if(!processor.worker.modelReady.load() && !juce::File(processor.modelPath).existsAsFile())
             message="Speech model not installed. Run scripts/download-model.sh base. Folder: "+modelLocation::directory().getFullPathName();
@@ -271,7 +310,7 @@ private:
         }),true);
     }
     TracerProcessor& processor;
-    juce::TextButton trace,newTake,model,exportWord,follow;
+    juce::TextButton trace,newTake,model,exportWord,follow,tap,useTap;
     juce::ComboBox timing,unit,sizes; juce::Slider tempo,beats;
     juce::TextEditor title; juce::Label status,timingStatus;
     LeadSheet sheet; juce::Viewport viewport;

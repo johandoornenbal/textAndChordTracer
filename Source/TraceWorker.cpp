@@ -41,7 +41,8 @@ void TraceWorker::run() {
     double analysisPhase=0,speechPhase=0,energy=0,quarter=0,bpm=120,lastEnd=-1;
     double filterL=0,filterR=0,filterV=0,lastHint=120;
     music::Grid grid;
-    unsigned activeGeneration=0,pass=0;
+    unsigned activeGeneration=0,pass=0,lastHintRevision=0;
+    int lastMode=-1;
     std::string previousChord;
     bool wasPlaying=false,heardAudio=false;
     double previousEnergy=0;
@@ -102,8 +103,10 @@ void TraceWorker::run() {
             }
         }
         if(restarted && known) { currentBar=static_cast<int>(music::barNumber(grid)); ++focusRevision; }
-        if(!mappedTiming && packet->mode==1 && std::abs(packet->hint-lastHint)>.1) { bpm=packet->hint; grid.bpm=bpm; }
-        lastHint=packet->hint;
+        if(!mappedTiming) {
+            if(packet->mode==1 && (std::abs(packet->hint-lastHint)>.1 || packet->hintRevision!=lastHintRevision || lastMode!=1)) { bpm=packet->hint; grid.bpm=bpm; }
+            lastHint=packet->hint; lastHintRevision=packet->hintRevision; lastMode=packet->mode;
+        }
         if(!heardAudio && packet->mode!=2) {
             double level=0; for(int i=0;i<packet->count;++i) level+=packet->left[static_cast<size_t>(i)]*packet->left[static_cast<size_t>(i)]+packet->right[static_cast<size_t>(i)]*packet->right[static_cast<size_t>(i)]+packet->vocal[static_cast<size_t>(i)]*packet->vocal[static_cast<size_t>(i)];
             if(level/juce::jmax(1,packet->count)<1.e-7) { lastEnd=packet->seconds+packet->count/packet->rate; continue; }

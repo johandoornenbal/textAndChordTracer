@@ -25,7 +25,7 @@ struct AudioCapture {
     double rate=48000,seconds=0,hint=120;
     music::Grid host;
     bool playing=false;
-    unsigned generation=0;
+    unsigned generation=0,hintRevision=0;
 };
 struct SpeechStamp { int sample=0; double seconds=0; music::Grid grid; };
 struct SpeechJob {
