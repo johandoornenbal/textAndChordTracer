@@ -162,7 +162,7 @@ public:
             bar.quarter=finite(node.getProperty("quarter",0.),0.); bar.seconds=finite(node.getProperty("seconds",0.),0.);
             bar.bpm=std::clamp(finite(node.getProperty("bpm",120.),120.),10.,300.);
             bar.numerator=juce::jlimit(1,12,static_cast<int>(node.getProperty("numerator",4)));
-            bar.denominator=static_cast<int>(node.getProperty("denominator",4)); if(bar.denominator!=4 && bar.denominator!=8 && bar.denominator!=16) bar.denominator=4;
+            bar.denominator=static_cast<int>(node.getProperty("denominator",4)); if(bar.denominator!=2 && bar.denominator!=4 && bar.denominator!=8 && bar.denominator!=16) bar.denominator=4;
             bar.lyrics=node.getProperty("lyrics").toString().substring(0,4096); bar.lyricsEdited=node.getProperty("edited",false); bar.chordsEdited=node.getProperty("chordsEdited",false); bar.lyricsBeatAligned=node.getProperty("lyricBeats",false);
             for(int i=0;i<bar.numerator;++i) { bar.chords.push_back(node.getProperty("chord"+juce::String(i)).toString().substring(0,64)); bar.words.push_back(node.getProperty("word"+juce::String(i)).toString().substring(0,1024)); }
             bars[bar.number]=bar;

@@ -28,6 +28,9 @@ void tapTests() {
     check(music::barNumber(guide[4].grid)==1 && std::abs(guide[4].seconds-12.)<.01,"Tap downbeat lost bar position");
     BarTapSession slow; slow.downbeat(0,0,6,8); for(int i=1;i<6;++i) slow.other(i*1500.,i*1.5);
     check(slow.ready() && std::abs(slow.quarterBpm()-20.)<.01,"Slow compound-meter tap failed");
+    BarTapSession half; half.downbeat(0,0,2,2); half.other(1000,1);
+    auto halfGuide=half.guide(0,0,2000,2);
+    check(half.ready() && std::abs(half.quarterBpm()-120.)<.01 && halfGuide.size()==2 && halfGuide[0].grid.denominator==2 && std::abs(halfGuide[1].grid.quarter-2.)<.01,"Half-note tap mapping failed");
     TapCaptureGate gate;
     check(gate.permit(true,0,.01),"Normal playback was blocked"); gate.begin();
     check(!gate.permit(true,.01,.01),"Captured while tapping"); gate.finish();

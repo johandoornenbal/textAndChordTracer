@@ -57,7 +57,7 @@ Set the meter. Tap **Bar start** on each first count, **Other beat** on the rema
 ## Playback and export
 
 Keep the analysis track active while playing. A background transcription pass can
-finish after transport stops. Wait until it finishes, then export the `.docx`. Choose Basic for just chords and lyrics, or Detailed
+finish after transport stops. Wait until it finishes, then export the `.docx`. Choose Lyrics only for the words, Basic for editable chord/lyric text lines (spaces, no cells), or Detailed
 for bar numbers and timing information.
 Open it in Word, or upload it to Drive and open with Google Docs. Double-click
 bars to fix guessed chords or sung words before export. Follow OFF lets you read

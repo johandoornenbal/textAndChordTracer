@@ -2,7 +2,7 @@
 #include "TraceModel.h"
 #include <juce_core/juce_core.h>
 namespace documentExport {
-enum class Style { basic, detailed };
+enum class Style { basic, detailed, lyrics };
 inline juce::String xml(const juce::String& text) {
     return text.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\"","&quot;").replace("'","&apos;");
 }
@@ -24,9 +24,28 @@ inline juce::String table(const std::vector<PoemCell>& cells,bool detailed=false
     }
     return result+"</w:tbl>";
 }
-inline juce::String poem(const std::vector<LeadBar>& bars) {
+// Ordinary paragraphs remain easy to edit in Word and Google Docs. A monospace
+// font makes approximate chord spacing useful without imposing a table structure.
+inline juce::String textLine(const juce::String& text,bool chord=false) {
+    return "<w:p><w:pPr><w:spacing w:after=\"0\"/>"+juce::String(chord?"<w:keepNext/>":"")+"</w:pPr><w:r><w:rPr><w:rFonts w:ascii=\"Courier New\" w:hAnsi=\"Courier New\"/>"+juce::String(chord?"<w:b/>":"")+"</w:rPr><w:t xml:space=\"preserve\">"+xml(text)+"</w:t></w:r></w:p>";
+}
+inline juce::String poem(const std::vector<LeadBar>& bars,bool lyricsOnly=false) {
     juce::String result; std::vector<PoemCell> line; int width=0,words=0;
-    auto flush=[&] { if(!line.empty()) { result+=table(line)+paragraph(""); line.clear(); width=words=0; } };
+    auto flush=[&] {
+        if(line.empty()) return;
+        juce::String chords,lyrics;
+        for(const auto& cell:line) {
+            if(lyricsOnly) { if(cell.lyric.isNotEmpty()) lyrics+=(lyrics.isEmpty()?"":" ")+cell.lyric; }
+            else {
+                const int span=juce::jmax(cell.chord.length(),cell.lyric.length())+2;
+                chords+=cell.chord.paddedRight(' ',span); lyrics+=cell.lyric.paddedRight(' ',span);
+            }
+        }
+        if(!lyricsOnly && chords.trim().isNotEmpty()) result+=textLine(chords.trimEnd(),true);
+        if(lyrics.trim().isNotEmpty()) result+=lyricsOnly?paragraph(lyrics.trimEnd()):textLine(lyrics.trimEnd());
+        if(!lyricsOnly || lyrics.trim().isNotEmpty()) result+=paragraph("");
+        line.clear(); width=words=0;
+    };
     auto add=[&](const PoemCell& cell) {
         const auto tokens=juce::StringArray::fromTokens(cell.lyric," \t\n\r","");
         const int count=tokens.size(),length=juce::jmax(cell.chord.length(),cell.lyric.length())+2;
@@ -36,11 +55,12 @@ inline juce::String poem(const std::vector<LeadBar>& bars) {
     };
     for(const auto& bar:bars) {
         juce::StringArray chordNames; for(const auto& chord:bar.chords) if(chord.isNotEmpty()) chordNames.add(chord);
-        if(bar.lyrics.isEmpty() && chordNames.isEmpty()) { flush(); continue; }
+        if(bar.lyrics.isEmpty() && (lyricsOnly || chordNames.isEmpty())) { flush(); continue; }
         auto barWords=juce::StringArray::fromTokens(bar.lyrics," \t\n\r",""); barWords.removeEmptyStrings();
         if(words>=6 && words+barWords.size()>14) flush();
         std::vector<PoemCell> cells;
-        if(bar.hasBeatLyrics()) {
+        if(lyricsOnly) cells.push_back({{},bar.lyrics});
+        else if(bar.hasBeatLyrics()) {
             for(size_t i=0;i<bar.words.size();++i) if(bar.words[i].isNotEmpty() || bar.chords[i].isNotEmpty()) cells.push_back({bar.chords[i],bar.words[i]});
         } else cells.push_back({chordNames.joinIntoString("  "),bar.lyrics});
         int phraseWidth=0; for(const auto& cell:cells) phraseWidth+=juce::jmax(cell.chord.length(),cell.lyric.length())+2;
@@ -65,7 +85,7 @@ inline juce::String poem(const std::vector<LeadBar>& bars) {
 }
 inline juce::String makeDocument(const std::vector<LeadBar>& bars,const juce::String& title,Style style=Style::detailed) {
     juce::String body;
-    if(style==Style::basic) body=poem(bars);
+    if(style==Style::basic || style==Style::lyrics) body=poem(bars,style==Style::lyrics);
     else {
         body=paragraph(title,true)+paragraph("Text and Chord Tracer | Editable draft - review sung words, chords and bar placement.");
         for(const auto& bar:bars) {

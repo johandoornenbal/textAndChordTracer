@@ -39,6 +39,8 @@ Tap **Bar start** on the first count of each bar and **Other beat** on every rem
 
 Tap while the DAW plays to save bar and beat positions. Replay uses these positions to organise the lead sheet, including local tempo changes. A closed bar with missing middle counts is divided evenly using its selected meter. Automatic results from the first tapped bar are rebuilt on replay; manual corrections are retained. Tapping without playback sets only a tempo indication. Audio output remains muted.
 
+Beat units **2, 4, 8 and 16** are available, including half-note meters such as 2/2. Existing saved beat-unit choices are preserved.
+
 The tempo hint accepts **10–300 quarter-note BPM**, including songs below 40 BPM.
 Tap intervals use the meter's beat unit and are converted into this quarter-note
 indication. For example, six eighth-note taps 500 ms apart in 6/8 describe a
@@ -129,7 +131,7 @@ without a model.
 
 **Export Word / Docs...** saves a native `.docx` lead sheet with chords above
 lyrics. The export menu offers **Basic** (chords and lyrics only) and **Detailed**
-(title, bar numbers, meter and tempo). Basic flows across bars into poem-like lyric lines, with chords above their corresponding words, using punctuation and sensible line lengths. Detailed preserves the beat cells you edited.
+(title, bar numbers, meter and tempo). Basic flows across bars into poem-like lines using ordinary editable paragraphs and spaces, with a chord line above each lyric line. No tables or cells are used. **Lyrics only** exports the words as normal paragraphs without chords or timing information. Detailed preserves the beat cells you edited.
 Plain lyric corrections without separators span the bar in Detailed. XML text is escaped and the file is written
 through a temporary file before replacement. Open it directly in Microsoft Word.
 For Google Docs, upload the same `.docx` to Google Drive and choose **Open with >

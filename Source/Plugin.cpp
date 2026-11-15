@@ -15,6 +15,7 @@ public:
         startTimerHz(2);
     }
     ~TracerProcessor() override { stopTimer(); }
+    static int beatUnit(int index) { return index==3?2:4<<juce::jlimit(0,2,index); }
     static juce::File defaultModel() {
         return modelLocation::directory().getChildFile("ggml-base.en.bin");
     }
@@ -24,7 +25,7 @@ public:
         p.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"timingMode",1},"Timing mode",juce::StringArray{"Detect","Hint + follow","DAW"},0));
         p.add(std::make_unique<juce::AudioParameterFloat>(juce::ParameterID{"bpmHint",1},"Approximate tempo",juce::NormalisableRange<float>(10,300,.1f),120));
         p.add(std::make_unique<juce::AudioParameterInt>(juce::ParameterID{"beatsHint",1},"Beats per bar hint",2,12,4));
-        p.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"unitHint",1},"Beat unit hint",juce::StringArray{"4","8","16"},0));
+        p.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"unitHint",1},"Beat unit hint",juce::StringArray{"4","8","16","2"},0));
         p.add(std::make_unique<juce::AudioParameterChoice>(juce::ParameterID{"language",1},"Lyric language",juce::StringArray{"English","Dutch"},0));
         return p;
     }
@@ -37,7 +38,7 @@ public:
     template<class T> void capture(juce::AudioBuffer<T>& buffer) {
         lastCallback.store(juce::Time::getMillisecondCounter(),std::memory_order_relaxed);
         auto main=getBusBuffer(buffer,true,0); const bool vocalEnabled=getBus(true,1)->isEnabled(); auto vocal=getBusBuffer(buffer,true,1);
-        music::Grid grid; grid.bpm=bpm->load(); grid.numerator=juce::roundToInt(numerator->load()); grid.denominator=4<<juce::roundToInt(denominator->load());
+        music::Grid grid; grid.bpm=bpm->load(); grid.numerator=juce::roundToInt(numerator->load()); grid.denominator=beatUnit(juce::roundToInt(denominator->load()));
         bool playing=true,hostClock=false; double seconds=fallbackSeconds;
         if(auto* head=getPlayHead()) if(auto position=head->getPosition()) {
             playing=position->getIsPlaying();
@@ -48,7 +49,7 @@ public:
             if(auto start=position->getPpqPositionOfLastBarStart()) if(auto bar=position->getBarCount()) { grid.originQuarter=*start; grid.originBar=*bar; }
         }
         const int timing=juce::roundToInt(mode->load());
-        if(timing!=2) { grid.numerator=juce::roundToInt(numerator->load()); grid.denominator=4<<juce::roundToInt(denominator->load()); }
+        if(timing!=2) { grid.numerator=juce::roundToInt(numerator->load()); grid.denominator=beatUnit(juce::roundToInt(denominator->load())); }
         transportSequence.fetch_add(1,std::memory_order_acq_rel);
         transportSeconds.store(seconds,std::memory_order_relaxed); transportMillis.store(juce::Time::getMillisecondCounterHiRes(),std::memory_order_relaxed);
         transportPlaying.store(playing,std::memory_order_relaxed); transportValid.store(hostClock,std::memory_order_relaxed);
@@ -116,7 +117,7 @@ public:
             tapTempo.reset(); tapGate.begin(); worker.finishRequested=true; tapFeedback.clear();
         }
         const auto seconds=projectTime(milliseconds);
-        if(downbeat) tapTempo.downbeat(milliseconds,seconds,juce::roundToInt(numerator->load()),4<<juce::roundToInt(denominator->load()));
+        if(downbeat) tapTempo.downbeat(milliseconds,seconds,juce::roundToInt(numerator->load()),beatUnit(juce::roundToInt(denominator->load())));
         else if(!tapTempo.other(milliseconds,seconds)) tapFeedback="Next count should be Bar start (or Stop to finish)";
     }
     void cancelTapping() {
@@ -241,7 +242,7 @@ public:
         tempoAttachment=std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.state,"bpmHint",tempo);
         beats.setSliderStyle(juce::Slider::IncDecButtons); beats.setTextBoxStyle(juce::Slider::TextBoxLeft,false,36,26);
         beatsAttachment=std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment>(processor.state,"beatsHint",beats);
-        addAndMakeVisible(unit); unit.addItemList({"4","8","16"},1);
+        addAndMakeVisible(unit); unit.setComponentID("beatUnit"); unit.addItemList({"4","8","16","2"},1);
         unitAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(processor.state,"unitHint",unit);
         addAndMakeVisible(languageChoice); languageChoice.setComponentID("language"); languageChoice.addItemList({"English","Dutch"},1);
         languageAttachment=std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment>(processor.state,"language",languageChoice);
@@ -329,12 +330,13 @@ private:
         juce::PopupMenu menu;
         menu.addItem(1,"Basic - chords and lyrics only");
         menu.addItem(2,"Detailed - bar numbers, meter and tempo");
+        menu.addItem(3,"Lyrics only");
         menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&exportWord),[safe=juce::Component::SafePointer<TracerPanel>(this)](int result) {
-            if(safe && result!=0) safe->saveDocument(result==1?documentExport::Style::basic:documentExport::Style::detailed);
+            if(safe && result!=0) safe->saveDocument(result==1?documentExport::Style::basic:result==3?documentExport::Style::lyrics:documentExport::Style::detailed);
         });
     }
     void saveDocument(documentExport::Style style) {
-        chooser=std::make_unique<juce::FileChooser>((style==documentExport::Style::basic?"Export basic chords and lyrics":"Export detailed lead sheet"),juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(juce::File::createLegalFileName(processor.title)+(style==documentExport::Style::basic?"-basic.docx":".docx")),"*.docx");
+        chooser=std::make_unique<juce::FileChooser>((style==documentExport::Style::lyrics?"Export lyrics only":style==documentExport::Style::basic?"Export basic chords and lyrics":"Export detailed lead sheet"),juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(juce::File::createLegalFileName(processor.title)+(style==documentExport::Style::lyrics?"-lyrics.docx":style==documentExport::Style::basic?"-basic.docx":".docx")),"*.docx");
         chooser->launchAsync(juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::canSelectFiles|juce::FileBrowserComponent::warnAboutOverwriting,[safe=juce::Component::SafePointer<TracerPanel>(this),style](const juce::FileChooser& selected) {
             if(!safe || selected.getResult()==juce::File{}) return;
             const auto file=selected.getResult().withFileExtension("docx");
