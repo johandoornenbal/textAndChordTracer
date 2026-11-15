@@ -75,12 +75,23 @@ void TraceWorker::run() {
             analysisPhase=speechPhase=filterL=filterR=filterV=0; grid={}; heardAudio=false; previousEnergy=0;
         }
         if(!packet->playing) { if(wasPlaying) flush(false); wasPlaying=false; continue; }
-        const bool seek=lastEnd>=0 && std::abs(packet->seconds-lastEnd)>.15;
-        if(seek) { flush(false); filled=hop=stable=0; previousChord.clear(); quarter=packet->seconds*bpm/60.; }
-        if(!wasPlaying || seek) { ++pass; speech->count=speech->skip=speech->stampCount=0; }
+        const bool seek=lastEnd>=0 && std::abs(packet->seconds-lastEnd)>.02;
+        const bool restarted=!wasPlaying || seek;
+        if(seek) { flush(false); filled=hop=stable=energySamples=0; energy=previousEnergy=0; previousChord.clear(); tempo.reset(); analysisPhase=speechPhase=filterL=filterR=filterV=0; }
+        if(restarted) { ++pass; speech->count=speech->skip=speech->stampCount=0; }
         wasPlaying=true;
+        const auto known=document.positionAt(packet->seconds);
+        const auto knownEnd=document.positionAt(packet->seconds+packet->count/packet->rate);
+        const bool mappedTiming=packet->mode!=2 && known && (restarted || knownEnd.has_value());
         if(packet->mode==2 && packet->host.fromHost) grid=packet->host;
-        else {
+        else if(mappedTiming) {
+            grid=*known; bpm=grid.bpm; quarter=grid.quarter; heardAudio=true;
+            detectedBpm=grid.bpm; detectedNumerator=grid.numerator;
+        } else {
+            if(restarted && !known) {
+                grid=document.continuation();
+                if(!document.snapshot().empty()) { quarter=grid.quarter; bpm=grid.bpm; }
+            }
             grid.quarter=quarter; grid.bpm=bpm; grid.fromHost=false;
             const int desiredBeats=packet->mode==1 || detectedNumerator.load()==0?packet->host.numerator:detectedNumerator.load();
             const int desiredUnit=packet->mode==1 || detectedNumerator.load()==0?packet->host.denominator:4;
@@ -90,14 +101,15 @@ void TraceWorker::run() {
                 grid.numerator=desiredBeats; grid.denominator=desiredUnit;
             }
         }
-        if(packet->mode==1 && std::abs(packet->hint-lastHint)>.1) { bpm=packet->hint; grid.bpm=bpm; }
+        if(restarted && known) { currentBar=static_cast<int>(music::barNumber(grid)); ++focusRevision; }
+        if(!mappedTiming && packet->mode==1 && std::abs(packet->hint-lastHint)>.1) { bpm=packet->hint; grid.bpm=bpm; }
         lastHint=packet->hint;
         if(!heardAudio && packet->mode!=2) {
             double level=0; for(int i=0;i<packet->count;++i) level+=packet->left[static_cast<size_t>(i)]*packet->left[static_cast<size_t>(i)]+packet->right[static_cast<size_t>(i)]*packet->right[static_cast<size_t>(i)]+packet->vocal[static_cast<size_t>(i)]*packet->vocal[static_cast<size_t>(i)];
             if(level/juce::jmax(1,packet->count)<1.e-7) { lastEnd=packet->seconds+packet->count/packet->rate; continue; }
             heardAudio=true;
         }
-        document.touch(grid,packet->seconds,activeGeneration);
+        document.touch(grid,packet->seconds,activeGeneration,mappedTiming && knownEnd?0.:packet->count/packet->rate);
         const double coefficient=1.-std::exp(-2*music::pi*4500./packet->rate);
         auto finite=[](float value) { return std::isfinite(value)?value:0.f; };
         for(int i=0;i<packet->count;++i) {
@@ -119,7 +131,7 @@ void TraceWorker::run() {
                 if(++energySamples==256) {
                     const double currentEnergy=energy/256;
                     tempo.push(currentEnergy);
-                    if(packet->mode!=2 && currentEnergy>1.e-6 && currentEnergy>previousEnergy*1.8) {
+                    if(!mappedTiming && packet->mode!=2 && currentEnergy>1.e-6 && currentEnergy>previousEnergy*1.8) {
                         const double beat=(grid.quarter-grid.originQuarter)/grid.beatLength();
                         const double error=std::round(beat)-beat;
                         if(std::abs(error)<.2) grid.quarter+=error*grid.beatLength()*.15;
@@ -132,7 +144,7 @@ void TraceWorker::run() {
                     auto centre=grid; centre.quarter-=music::fftSize*.5/music::analysisRate*grid.bpm/60.;
                     if(stable>=2 && centre.quarter>=0) document.chord(centre,seconds-music::fftSize*.5/music::analysisRate,juce::String(chord.name),activeGeneration);
                     std::move(left.begin()+1024,left.end(),left.begin()); std::move(right.begin()+1024,right.end(),right.begin()); filled=music::fftSize-1024;
-                    if(++hop%12==0 && packet->mode!=2) {
+                    if(++hop%12==0 && packet->mode!=2 && !mappedTiming) {
                         const double candidate=tempo.estimate(packet->mode==1?packet->hint:bpm);
                         if(candidate>0) { bpm=bpm*.8+candidate*.2; detectedBpm=bpm; }
                         if(packet->mode==0) {

@@ -43,7 +43,11 @@ is recommended. See [REAPER routing](docs/REAPER.md).
 3. Enable **Trace playback**, then play the song. The sheet grows as music is
    analysed. **Follow: ON** slowly scrolls when the display fills; turn it off to
    read earlier bars. Double-click a bar to correct its chord row and lyrics.
-   Separate chord beat positions with `|` (for example `C | | F | G`).
+   Use `|` in either row to place content on beats. Empty fields leave a beat
+   blank: lyrics `| My body | is | a` puts "My body" on beat 2, "is" on beat 3,
+   and "a" on beat 4. The editor preserves the current detected beat positions
+   when reopened. Without `|`, manually entered lyrics span the whole bar.
+   The editor prevents saving more fields than the bar has beats.
 4. Stop playback or turn Trace playback off and wait for pending transcription
    to finish. Export becomes available when capture and pending work finish.
    If the host stops issuing callbacks, a timer requests a final flush.
@@ -71,6 +75,22 @@ plugin is intentionally silent, including its bypass callbacks. A DAW can route
 around a hard-bypassed or removed plugin, so keep Master/parent send disabled as
 a second safeguard. Session recall preserves the title, settings, model path,
 lead sheet and manual corrections; raw audio and model weights are not embedded.
+
+## Restarting playback inside a traced section
+
+The plugin records project-time-to-bar/beat positions while tracing. Restarting
+or seeking backward or forward inside a **previously reached section** reuses
+that timing, including the moving tempo, instead of starting the sheet over.
+Follow returns the view to the resumed bar. The map is recalled with the session;
+manual corrections and the existing lyric protections remain in force.
+
+Unvisited timeline positions are not guessed from the DAW tempo. In Detect and
+Hint + follow they begin a new provisional section after the existing sheet.
+DAW mode continues to use the host's grid. New takes clear the map. Use New take
+after moving audio items or changing the performance, since saved positions refer
+to the previously captured arrangement. Old sessions without the fine-grained
+map can resume approximately between adjacent saved bar anchors. Up to 36,000
+position markers are retained per take (roughly an hour at 10 markers/second).
 
 ## Local transcription setup
 
@@ -102,7 +122,9 @@ without a model.
 
 **Export Word / Docs...** creates a native `.docx` file containing the song title,
 measure numbers, local tempo/meter indications, chord cells, and lyrics underneath.
-Manual lyric corrections span the bar. XML text is escaped and the file is written
+The export menu offers **Basic** (chords and lyrics only) and **Detailed**
+(title, bar numbers, meter and tempo). Both preserve the beat cells you edited.
+Plain lyric corrections without separators span the bar. XML text is escaped and the file is written
 through a temporary file before replacement. Open it directly in Microsoft Word.
 For Google Docs, upload the same `.docx` to Google Drive and choose **Open with >
 Google Docs**. The plugin does not sign into Google or upload documents itself.

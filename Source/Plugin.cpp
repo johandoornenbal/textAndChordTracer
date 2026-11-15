@@ -108,6 +108,10 @@ namespace theme { const juce::Colour cream{0xfff4eddb},ink{0xff252b29},gold{0xff
 class LeadSheet final : public juce::Component {
 public:
     void setBars(std::vector<LeadBar> value,int active) { bars=std::move(value); current=active; setSize(824,juce::jmax(390,static_cast<int>(bars.size())*142+30)); repaint(); }
+    int yForBar(int number) const {
+        for(size_t row=0;row<bars.size();++row) if(bars[row].number==number) return static_cast<int>(row)*142;
+        return 0;
+    }
     void paint(juce::Graphics& g) override {
         using namespace theme; g.fillAll(juce::Colour(0xff222d26));
         if(bars.empty()) { g.setColour(muted); g.setFont(juce::FontOptions(17.f)); g.drawText("Play the song to start tracing",getLocalBounds(),juce::Justification::centred); return; }
@@ -122,9 +126,9 @@ public:
                 g.setColour(cream.withAlpha(.12f)); g.drawVerticalLine(x,static_cast<float>(y+34),static_cast<float>(y+111));
                 g.setColour(muted); g.setFont(juce::FontOptions(9.f)); g.drawText(juce::String(beat+1),x+8,y+28,30,14,juce::Justification::left);
                 g.setColour(gold); g.setFont(juce::FontOptions(24.f)); g.drawFittedText(bar.chords[static_cast<size_t>(beat)],x+8,y+45,width-12,34,juce::Justification::left,1);
-                if(!bar.lyricsEdited) { g.setColour(cream); g.setFont(juce::FontOptions(15.f)); g.drawFittedText(bar.words[static_cast<size_t>(beat)],x+8,y+84,width-12,31,juce::Justification::topLeft,2); }
+                if(bar.hasBeatLyrics()) { g.setColour(cream); g.setFont(juce::FontOptions(15.f)); g.drawFittedText(bar.words[static_cast<size_t>(beat)],x+8,y+84,width-12,31,juce::Justification::topLeft,2); }
             }
-            g.setColour(cream); if(bar.lyricsEdited) { g.setFont(juce::FontOptions(16.f)); g.drawFittedText(bar.lyrics,32,y+84,752,34,juce::Justification::topLeft,2); }
+            g.setColour(cream); if(!bar.hasBeatLyrics()) { g.setFont(juce::FontOptions(16.f)); g.drawFittedText(bar.lyrics,32,y+84,752,34,juce::Justification::topLeft,2); }
             g.setColour(cream.withAlpha(.08f)); g.drawHorizontalLine(y+133,24,792);
         }
     }
@@ -148,7 +152,7 @@ public:
         newTake.setButtonText("New take"); newTake.onClick=[this] { processor.worker.newTake(); };
         model.setComponentID("speechModel"); model.setButtonText("Speech model..."); model.setTooltip("Choose a model from "+modelLocation::directory().getFullPathName()); model.onClick=[this] { selectModel(); };
         exportWord.setButtonText("Export Word / Docs..."); exportWord.setComponentID("export"); exportWord.onClick=[this] { exportDocument(); };
-        exportWord.setTooltip("Save a Word .docx lead sheet. For Google Docs, upload the file to Drive and open it with Google Docs.");
+        exportWord.setTooltip("Choose Basic (chords/lyrics only) or Detailed (bar numbers/meter/tempo), then save a Word .docx. For Google Docs, upload the file to Drive and open it with Google Docs.");
         follow.setButtonText("Follow: ON"); follow.setClickingTogglesState(true); follow.setToggleState(true,juce::dontSendNotification);
         follow.onClick=[this] { follow.setButtonText(follow.getToggleState()?"Follow: ON":"Follow: OFF"); };
         addAndMakeVisible(timing); timing.addItemList({"Detect","Hint + follow","DAW"},1); timing.setComponentID("timingMode");
@@ -197,8 +201,14 @@ public:
             lastRevision=revision; lastBar=processor.worker.currentBar.load(); sheet.setBars(std::move(bars),lastBar);
         }
         if(follow.getToggleState() && (processor.worker.capturing.load() || processor.worker.pending()) && !dragging()) {
-            const int target=juce::jmax(0,sheet.getHeight()-viewport.getHeight());
-            const auto difference=target-viewport.getViewPositionY(); if(difference>0) viewport.setViewPosition(0,viewport.getViewPositionY()+juce::jmax(1,difference/14));
+            const int maximum=juce::jmax(0,sheet.getHeight()-viewport.getHeight());
+            const int target=juce::jlimit(0,maximum,sheet.yForBar(lastBar)-viewport.getHeight()/3);
+            const auto focus=processor.worker.focusRevision.load();
+            if(focus!=lastFocus) { lastFocus=focus; viewport.setViewPosition(0,target); }
+            else {
+                const int difference=target-viewport.getViewPositionY();
+                if(difference!=0) viewport.setViewPosition(0,viewport.getViewPositionY()+(difference>0?1:-1)*juce::jmax(1,std::abs(difference)/14));
+            }
         }
         const auto bpm=processor.worker.detectedBpm.load();
         timingStatus.setText((processor.worker.capturing.load()?"TRACING":"READY")+juce::String("   /   ")+(timing.getSelectedId()==3 && processor.worker.usingHost.load()?"DAW grid":bpm>0?"~"+juce::String(bpm,1)+" BPM":"Listening for a steady pulse")+"   /   Bar grid is provisional",juce::dontSendNotification);
@@ -225,19 +235,37 @@ private:
         });
     }
     void exportDocument() {
-        chooser=std::make_unique<juce::FileChooser>("Export lead sheet - Word / Google Docs",juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(juce::File::createLegalFileName(processor.title)+".docx"),"*.docx");
-        chooser->launchAsync(juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::canSelectFiles|juce::FileBrowserComponent::warnAboutOverwriting,[safe=juce::Component::SafePointer<TracerPanel>(this)](const juce::FileChooser& selected) {
+        juce::PopupMenu menu;
+        menu.addItem(1,"Basic - chords and lyrics only");
+        menu.addItem(2,"Detailed - bar numbers, meter and tempo");
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetComponent(&exportWord),[safe=juce::Component::SafePointer<TracerPanel>(this)](int result) {
+            if(safe && result!=0) safe->saveDocument(result==1?documentExport::Style::basic:documentExport::Style::detailed);
+        });
+    }
+    void saveDocument(documentExport::Style style) {
+        chooser=std::make_unique<juce::FileChooser>((style==documentExport::Style::basic?"Export basic chords and lyrics":"Export detailed lead sheet"),juce::File::getSpecialLocation(juce::File::userDocumentsDirectory).getChildFile(juce::File::createLegalFileName(processor.title)+(style==documentExport::Style::basic?"-basic.docx":".docx")),"*.docx");
+        chooser->launchAsync(juce::FileBrowserComponent::saveMode|juce::FileBrowserComponent::canSelectFiles|juce::FileBrowserComponent::warnAboutOverwriting,[safe=juce::Component::SafePointer<TracerPanel>(this),style](const juce::FileChooser& selected) {
             if(!safe || selected.getResult()==juce::File{}) return;
             const auto file=selected.getResult().withFileExtension("docx");
-            const bool ok=documentExport::writeDocx(file,safe->processor.worker.document.snapshot(),safe->processor.title);
+            const bool ok=documentExport::writeDocx(file,safe->processor.worker.document.snapshot(),safe->processor.title,style);
             safe->status.setText(ok?"Exported "+file.getFullPathName()+" - upload to Drive to open in Google Docs":"Export failed - choose another location",juce::dontSendNotification);
         });
     }
     void editBar(const LeadBar& bar) {
-        auto* window=new juce::AlertWindow("Edit bar "+juce::String(bar.number+1),"Chords: separate beat positions with |. Lyrics remain below the chord row.",juce::MessageBoxIconType::NoIcon);
+        auto* window=new juce::AlertWindow("Edit bar "+juce::String(bar.number+1),"Use | in either row to separate beats; an empty field leaves that beat blank. Without |, lyrics span the bar.",juce::MessageBoxIconType::NoIcon);
         juce::StringArray chords; for(const auto& value:bar.chords) chords.add(value);
-        window->addTextEditor("chords",chords.joinIntoString(" | "),"Chords"); window->addTextEditor("lyrics",bar.lyrics,"Lyrics");
+        window->addTextEditor("chords",chords.joinIntoString(" | "),"Chords"); window->addTextEditor("lyrics",bar.lyricsForEditor(),"Lyrics");
         window->addButton("Save",1); window->addButton("Cancel",0);
+        auto validate=[window,beats=bar.numerator] {
+            const bool valid=juce::StringArray::fromTokens(window->getTextEditorContents("chords"),"|","").size()<=beats
+                && juce::StringArray::fromTokens(window->getTextEditorContents("lyrics"),"|","").size()<=beats;
+            window->getButton(0)->setEnabled(valid);
+            window->setMessage(valid?"Use | in either row to separate beats; an empty field leaves that beat blank. Without |, lyrics span the bar."
+                :"This bar has "+juce::String(beats)+" beats. Remove extra | separators before saving.");
+        };
+        window->getTextEditor("chords")->onTextChange=validate;
+        window->getTextEditor("lyrics")->onTextChange=validate;
+        validate();
         window->enterModalState(true,juce::ModalCallbackFunction::create([safe=juce::Component::SafePointer<TracerPanel>(this),window,number=bar.number](int result) {
             if(safe && result==1) safe->processor.worker.document.edit(number,window->getTextEditorContents("chords"),window->getTextEditorContents("lyrics"));
         }),true);
@@ -252,7 +280,7 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> tempoAttachment,beatsAttachment;
     std::unique_ptr<juce::FileChooser> chooser;
     juce::TooltipWindow tooltip{this,600};
-    unsigned lastRevision=~0u; int lastBar=-1; bool haveBars=false;
+    unsigned lastRevision=~0u,lastFocus=0; int lastBar=-1; bool haveBars=false;
 };
 class TracerEditor final : public juce::AudioProcessorEditor {
 public:

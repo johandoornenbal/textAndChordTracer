@@ -53,10 +53,14 @@ If they play different voicings or substitutions, audition one at a time.
 ## Playback and export
 
 Keep the analysis track active while playing. A background transcription pass can
-finish after transport stops. Wait until it finishes, then export the `.docx`.
+finish after transport stops. Wait until it finishes, then export the `.docx`. Choose Basic for just chords and lyrics, or Detailed
+for bar numbers and timing information.
 Open it in Word, or upload it to Drive and open with Google Docs. Double-click
 bars to fix guessed chords or sung words before export. Follow OFF lets you read
-earlier bars without automatic scrolling. New take clears the previous capture.
+earlier bars without automatic scrolling. In the editor, `|` separates beat
+positions in both chords and lyrics; blank fields leave empty beats. New take clears the previous capture and its timing map. Restarting playback at
+a previously traced project position returns to its saved bar and beat; Follow
+moves the view there. Unvisited positions remain a new provisional section.
 
 This guide describes the intended REAPER pin/send configuration. Native REAPER
 routing and sung-lyric accuracy require validation on the user's Mac; synthetic

@@ -43,7 +43,7 @@ public:
     bool pending() const { return speechBusy.load() || !jobs.empty(); }
     CaptureQueue<AudioCapture,128> audio;
     TraceDocument document;
-    std::atomic<unsigned> generation{1},dropped{0};
+    std::atomic<unsigned> generation{1},dropped{0},focusRevision{0};
     std::atomic<double> detectedBpm{0};
     std::atomic<int> detectedNumerator{0},currentBar{0};
     std::atomic<bool> usingHost{false};

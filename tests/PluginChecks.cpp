@@ -79,20 +79,47 @@ void modelPaths() {
     const auto signature=modelLocation::signature(base); base.appendText(" changed");
     check(signature!=modelLocation::signature(base),"Model replacement did not change retry signature");
 }
+void recordedTimeline() {
+    TraceDocument document; music::Grid grid;
+    document.touch(grid,10.,0,.125);
+    grid.quarter=.25; grid.bpm=90; document.touch(grid,10.125,0,.125);
+    auto known=document.positionAt(10.2);
+    check(known && std::abs(known->quarter-.3625)<1.e-6,"Recorded local tempo was not used on resume");
+    check(!document.positionAt(10.3) && !document.positionAt(15.),"Unvisited timeline position was guessed");
+    grid.quarter=grid.originQuarter=8.; grid.originBar=5; grid.numerator=3;
+    document.touch(grid,20.,0,.125);
+    known=document.positionAt(20.05);
+    check(known && music::barNumber(*known)==5 && known->numerator==3,"Resume lost measure anchor or meter");
+    TraceDocument restored; restored.restore(document.save());
+    known=restored.positionAt(10.2);
+    check(known && std::abs(known->quarter-.3625)<1.e-6,"Timeline map was lost on session recall");
+    check(!restored.positionAt(15.),"Recall filled an unseen gap");
+    TraceDocument legacy; music::Grid old; legacy.touch(old,0.); old.quarter=4.; legacy.touch(old,2.);
+    TraceDocument migrated; migrated.restore(legacy.save()); known=migrated.positionAt(1.);
+    check(known && std::abs(known->quarter-2.)<1.e-6 && !migrated.positionAt(2.1),"Old bar-anchor migration failed");
+    restored.clear(); check(!restored.positionAt(10.2),"New take retained the old timeline map");
+}
 int main() try {
-    juce::ScopedJuceInitialiser_GUI init; modelPaths(); silentOutput(); captureBeforeMute();
+    juce::ScopedJuceInitialiser_GUI init; recordedTimeline(); modelPaths(); silentOutput(); captureBeforeMute();
     TraceDocument document; music::Grid grid; grid.bpm=112; grid.numerator=4;
     for(int bar=0;bar<6;++bar) {
         grid.quarter=bar*4.; document.touch(grid,bar*2.);
         document.chord(grid,bar*2.,std::array<const char*,6>{"C","Am","F","G","C","G7"}[static_cast<size_t>(bar)]);
         document.word(grid,bar*2.,"We"); grid.quarter+=1.; document.word(grid,bar*2.+.5,"follow"); grid.quarter+=1.; document.word(grid,bar*2.+1,"the"); grid.quarter+=1.; document.word(grid,bar*2.+1.5,"song");
     }
+    check(document.edit(0,"| Abmaj7 | Bbmaj7 |","| My body | is | a"),"Beat edit rejected");
+    auto positioned=document.snapshot()[0];
+    check(positioned.hasBeatLyrics() && positioned.words[0].isEmpty() && positioned.words[1]=="My body" && positioned.words[2]=="is" && positioned.words[3]=="a","Lyrics did not move to requested beats");
+    check(positioned.lyricsForEditor().trim()=="| My body | is | a","Reopened editor lost beat separators");
+    check(!document.edit(0,"C | | |","one | two | three | four | five"),"Extra lyric fields were silently discarded");
+    check(document.snapshot()[0].words==positioned.words,"Rejected edit changed the lyric placement");
     document.edit(1,"Am | | F |","Let the rhythm find its way");
     music::Grid corrected; corrected.quarter=4.; document.chord(corrected,2.,"Bdim");
     check(document.snapshot()[1].chords[0]=="Am","Analysis overwrote a manual chord correction");
     TraceDocument passes; passes.word(corrected,2.,"one",0,1); passes.word(corrected,2.1,"two",0,1); passes.word(corrected,2.,"duplicate",0,2);
     check(passes.snapshot()[0].lyrics=="one two","Repeated playback duplicated lyrics");
     auto stored=document.save(); TraceDocument recalled; recalled.restore(stored);
+    check(recalled.snapshot()[0].words==positioned.words && recalled.snapshot()[0].lyricsBeatAligned,"Beat placement was lost on session recall");
     check(recalled.snapshot().size()==6 && recalled.snapshot()[1].lyrics=="Let the rhythm find its way","Lead-sheet recall failed");
     std::unique_ptr<juce::AudioProcessor> p(createPluginFilter());
     juce::MemoryBlock bytes; p->getStateInformation(bytes);
@@ -114,6 +141,24 @@ int main() try {
     std::unique_ptr<juce::InputStream> input(zip.createStreamForEntry(zip.getIndexOfFileName("word/document.xml")));
     check(input!=nullptr,"Word document missing"); auto text=input->readEntireStreamAsString();
     check(juce::parseXML(text)!=nullptr && text.contains("Let the rhythm") && text.contains("&lt;&amp;&gt;"),"DOCX content or XML escaping failed");
+    auto documentXml=juce::parseXML(text); auto* body=documentXml->getChildByName("w:body");
+    check(body!=nullptr,"Word body missing"); auto* table=body->getChildByName("w:tbl");
+    check(table!=nullptr,"Word table missing"); auto* chordRow=table->getChildByName("w:tr");
+    auto* lyricRow=chordRow?chordRow->getNextElementWithTagName("w:tr"):nullptr;
+    check(lyricRow && lyricRow->getNumChildElements()==4,"Beat-aligned lyric row was merged in Word export");
+    const char* expected[]{"","My body","is","a"};
+    for(int beat=0;beat<4;++beat) check(lyricRow->getChildElement(beat)->getAllSubText()==expected[beat],"Word export misplaced lyric beat");
+    const auto basicFile=file.getSiblingFile("lead-sheet-basic.docx");
+    check(documentExport::writeDocx(basicFile,recalled.snapshot(),"Should not be printed",documentExport::Style::basic),"Basic export failed");
+    juce::ZipFile basicZip(basicFile);
+    std::unique_ptr<juce::InputStream> basicInput(basicZip.createStreamForEntry(basicZip.getIndexOfFileName("word/document.xml")));
+    check(basicInput!=nullptr,"Basic Word document missing"); const auto basicText=basicInput->readEntireStreamAsString();
+    auto basicXml=juce::parseXML(basicText); check(basicXml!=nullptr,"Basic Word XML invalid");
+    check(!basicText.contains("BPM") && !basicText.contains("Bar ") && !basicText.contains("Editable draft") && !basicText.contains("Should not be printed"),"Basic export included metadata");
+    auto* basicTable=basicXml->getChildByName("w:body")->getChildByName("w:tbl");
+    auto* basicLyrics=basicTable->getChildByName("w:tr")->getNextElementWithTagName("w:tr");
+    check(basicLyrics && basicLyrics->getNumChildElements()==4,"Basic export lost beat columns");
+    for(int beat=0;beat<4;++beat) check(basicLyrics->getChildElement(beat)->getAllSubText()==expected[beat],"Basic export misplaced lyrics");
     auto image=editor->createComponentSnapshot(editor->getLocalBounds()); auto stream=juce::File::getCurrentWorkingDirectory().getChildFile("ui-preview.png").createOutputStream();
     check(stream!=nullptr,"Cannot write preview"); stream->setPosition(0); stream->truncate(); check(juce::PNGImageFormat().writeImageToStream(image,*stream),"Cannot render editor");
     std::cout<<"Float/double silence, capture before mute, silent bypass callbacks, lead-sheet edits/recall, timing modes, UI scales, DOCX XML and actual editor preview passed\n";
